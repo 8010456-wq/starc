@@ -1,0 +1,4280 @@
+08.09 17:14
+starc语言示例库〈12〉
+---
+starc语言示例库〈12〉
+第五十八批：密码学进阶（548-570）
+示例548：椭圆曲线数字签名（ECDSA）
+```starc
+Funktion ecdsa_sign(message, private_key, curve)
+    // ECDSA数字签名生成
+    // 参数: message - 待签名消息, private_key - 私钥, curve - 椭圆曲线参数
+    // 返回值: {r, s} 签名对
+    // 1. 计算消息哈希
+    hash = hash_sha256(message)
+    // 2. 生成随机数k (1 < k < n)
+    k = zufall_ganz(1, curve.n - 1)
+    // 3. 计算椭圆曲线点 R = k * G
+    R = curve_point_multiply(k, curve.G, curve)
+    r = R.x % curve.n
+    // 4. 计算 s = k^(-1) * (hash + r * private_key) % n
+    k_inv = mod_inverse(k, curve.n)
+    s = (k_inv * (hash + r * private_key)) % curve.n
+    // 5. 如果 s 为0，重新生成签名
+    Solange s == 0
+        k = zufall_ganz(1, curve.n - 1)
+        R = curve_point_multiply(k, curve.G, curve)
+        r = R.x % curve.n
+        k_inv = mod_inverse(k, curve.n)
+        s = (k_inv * (hash + r * private_key)) % curve.n
+    Ende Solange
+    Ausgeben "ECDSA签名生成完成，r: " + r + ", s: " + s
+    gebe_zurueck {"r": r, "s": s}
+Ende Funktion
+```
+示例549：ECDSA签名验证
+```starc
+Funktion ecdsa_verify(message, signature, public_key, curve)
+    // ECDSA签名验证
+    // 参数: message - 原始消息, signature - {r, s}, public_key - 公钥
+    // 返回值: 签名是否有效
+    r = signature.r
+    s = signature.s
+    // 1. 检查 r 和 s 是否在有效范围
+    Wenn r < 1 oder r >= curve.n oder s < 1 oder s >= curve.n dann
+        Ausgeben "签名无效: r或s超出范围"
+        gebe_zurueck falsch
+    Ende Wenn
+    // 2. 计算消息哈希
+    hash = hash_sha256(message)
+    // 3. 计算 w = s^(-1) % n
+    w = mod_inverse(s, curve.n)
+    // 4. 计算 u1 = hash * w % n, u2 = r * w % n
+    u1 = (hash * w) % curve.n
+    u2 = (r * w) % curve.n
+    // 5. 计算点 X = u1 * G + u2 * public_key
+    G_point = curve.G
+    P1 = curve_point_multiply(u1, G_point, curve)
+    P2 = curve_point_multiply(u2, public_key, curve)
+    X = curve_point_add(P1, P2, curve)
+    // 6. 验证 x = r
+    valid = (X.x % curve.n) == r
+    Wenn valid dann
+        Ausgeben "ECDSA签名验证通过"
+    Sonst
+        Ausgeben "ECDSA签名验证失败"
+    Ende Wenn
+    gebe_zurueck valid
+Ende Funktion
+```
+示例550：Ed25519签名算法
+```starc
+Funktion ed25519_sign(message, private_key)
+    // Ed25519数字签名 (基于Curve25519)
+    // 参数: message - 待签名消息, private_key - 32字节私钥
+    // 返回值: 64字节签名
+    // 1. 计算私钥哈希
+    hash = hash_sha512(private_key)
+    // 2. 提取标量 a 和随机前缀
+    a = hash[0..31]
+    a[0] = a[0] & 248  // 清除低3位
+    a[31] = a[31] & 127 // 清除最高位
+    a[31] = a[31] | 64  // 设置第6位
+    // 3. 计算公钥 A = a * B (B为基点)
+    A = ed25519_scalar_multiply(a, ed25519_basepoint())
+    // 4. 计算随机数 r = SHA-512(hash[32..63] + message)
+    r_input = hash[32..63] + message
+    r = hash_sha512(r_input) % ed25519_order()
+    // 5. 计算 R = r * B
+    R = ed25519_scalar_multiply(r, ed25519_basepoint())
+    // 6. 计算 k = SHA-512(R + A + message)
+    k_input = point_encode(R) + point_encode(A) + message
+    k = hash_sha512(k_input) % ed25519_order()
+    // 7. 计算 s = (r + k * a) % order
+    s = (r + k * a) % ed25519_order()
+    // 8. 组装签名 (R + s)
+    signature = point_encode(R) + int_to_bytes(s, 32)
+    Ausgeben "Ed25519签名生成完成，长度: " + zeichenkette_laenge(signature)
+    gebe_zurueck signature
+Ende Funktion
+```
+示例551：椭圆曲线DH密钥交换（ECDH）
+```starc
+Funktion ecdh_key_exchange(private_key, peer_public_key, curve)
+    // ECDH密钥交换
+    // 参数: private_key - 本地私钥, peer_public_key - 对方公钥
+    // 返回值: 共享密钥
+    // 计算共享密钥点: (private_key * peer_public_key)
+    shared_point = curve_point_multiply(private_key, peer_public_key, curve)
+    // 提取x坐标作为共享密钥
+    shared_secret = shared_point.x
+    // 使用HKDF派生会话密钥
+    session_key = hkdf_extract(shared_secret, "ecdh-session")
+    Ausgeben "ECDH密钥交换完成，共享密钥: " + shared_secret
+    gebe_zurueck session_key
+Ende Funktion
+```
+示例552：后量子密码学 - Kyber密钥封装
+```starc
+Funktion kyber_keypair()
+    // Kyber后量子密钥封装 (简化版)
+    // 返回值: {public_key, secret_key}
+    // 1. 生成随机矩阵 A (基于LWE)
+    A = kyber_generate_matrix()
+    // 2. 生成秘密向量 s (小系数)
+    s = kyber_sample_secret()
+    // 3. 生成误差向量 e
+    e = kyber_sample_error()
+    // 4. 计算公钥 t = A*s + e
+    t = kyber_matrix_vector_multiply(A, s)
+    t = kyber_vector_add(t, e)
+    Ausgeben "Kyber密钥对生成完成"
+    gebe_zurueck {"public_key": t, "secret_key": s}
+Ende Funktion
+Funktion kyber_encapsulate(public_key)
+    // Kyber封装
+    // 参数: public_key - 公钥
+    // 返回值: {ciphertext, shared_secret}
+    // 1. 生成随机消息 m
+    m = zufall_byte(32)
+    // 2. 计算共享密钥 K = H(m)
+    K = hash_sha256(m)
+    // 3. 生成随机向量 r
+    r = kyber_sample_secret()
+    // 4. 计算密文 c1 = A^T * r + e1
+    c1 = kyber_transpose_matrix_vector_multiply(A, r)
+    c1 = kyber_vector_add(c1, kyber_sample_error())
+    // 5. 计算密文 c2 = t^T * r + e2 + m
+    c2 = kyber_vector_dot(public_key, r)
+    c2 = c2 + kyber_sample_error()
+    c2 = c2 + m
+    Ausgeben "Kyber封装完成，生成共享密钥"
+    gebe_zurueck {"ciphertext": [c1, c2], "shared_secret": K}
+Ende Funktion
+Funktion kyber_decapsulate(ciphertext, secret_key)
+    // Kyber解封装
+    // 参数: ciphertext, secret_key - 私钥
+    // 返回值: 共享密钥
+    c1 = ciphertext[0]
+    c2 = ciphertext[1]
+    // 恢复消息 m = c2 - s^T * c1
+    m = c2 - kyber_vector_dot(secret_key, c1)
+    // 验证并计算共享密钥
+    shared_secret = hash_sha256(m)
+    Ausgeben "Kyber解封装完成"
+    gebe_zurueck shared_secret
+Ende Funktion
+```
+示例553：零知识证明 - Schnorr协议
+```starc
+Funktion schnorr_prove(secret, public_key, generator)
+    // Schnorr零知识证明 - 证明者
+    // 参数: secret - 秘密值, public_key - 公钥, generator - 生成元
+    // 返回值: {challenge, response}
+    // 1. 生成随机数 r
+    r = zufall_ganz(1, generator.order)
+    // 2. 计算承诺 R = r * generator
+    R = point_multiply(r, generator)
+    // 3. 计算挑战 c = H(R, public_key)
+    challenge_input = point_encode(R) + point_encode(public_key)
+    challenge = hash_sha256(challenge_input) % generator.order
+    // 4. 计算响应 s = r + c * secret
+    response = (r + challenge * secret) % generator.order
+    Ausgeben "Schnorr证明生成完成"
+    gebe_zurueck {"challenge": challenge, "response": response, "commitment": R}
+Ende Funktion
+Funktion schnorr_verify(public_key, proof, generator)
+    // Schnorr零知识证明 - 验证者
+    // 参数: public_key - 公钥, proof - {challenge, response, commitment}
+    // 返回值: 证明是否有效
+    R = proof.commitment
+    c = proof.challenge
+    s = proof.response
+    // 验证: s * generator == R + c * public_key
+    left = point_multiply(s, generator)
+    right = point_add(R, point_multiply(c, public_key))
+    valid = point_equal(left, right)
+    Wenn valid dann
+        Ausgeben "Schnorr证明验证通过"
+    Sonst
+        Ausgeben "Schnorr证明验证失败"
+    Ende Wenn
+    gebe_zurueck valid
+Ende Funktion
+```
+示例554：BLS签名（聚合签名）
+```starc
+Funktion bls_keypair()
+    // BLS签名密钥对生成 (基于配对)
+    // 返回值: {private_key, public_key}
+    // 1. 生成私钥 sk (随机)
+    sk = zufall_ganz(1, bls_order())
+    // 2. 计算公钥 pk = sk * G1
+    pk = bls_scalar_multiply_G1(sk)
+    Ausgeben "BLS密钥对生成完成"
+    gebe_zurueck {"private_key": sk, "public_key": pk}
+Ende Funktion
+Funktion bls_sign(message, private_key)
+    // BLS签名
+    // 参数: message - 消息, private_key - 私钥
+    // 返回值: 签名
+    // 1. 将消息映射到G2群
+    hash_point = bls_hash_to_G2(message)
+    // 2. 签名 = sk * hash_point
+    signature = bls_scalar_multiply_G2(private_key, hash_point)
+    Ausgeben "BLS签名生成完成"
+    gebe_zurueck signature
+Ende Funktion
+Funktion bls_verify(message, signature, public_key)
+    // BLS签名验证
+    // 参数: message, signature, public_key
+    // 返回值: 是否有效
+    hash_point = bls_hash_to_G2(message)
+    // 验证: e(signature, G2) == e(public_key, hash_point)
+    left = bls_pairing(signature, bls_G2_generator())
+    right = bls_pairing(public_key, hash_point)
+    valid = bls_pairing_equal(left, right)
+    Wenn valid dann
+        Ausgeben "BLS签名验证通过"
+    Sonst
+        Ausgeben "BLS签名验证失败"
+    Ende Wenn
+    gebe_zurueck valid
+Ende Funktion
+Funktion bls_aggregate_signatures(signatures)
+    // BLS聚合签名
+    // 参数: signatures - 签名列表
+    // 返回值: 聚合签名
+    aggregated = signatures[0]
+    i = 1
+    Solange i < liste_laenge(signatures)
+        aggregated = bls_aggregate(aggregated, liste_abrufen(signatures, i))
+        i = i + 1
+    Ende Solange
+    Ausgeben "BLS聚合签名完成，聚合 " + liste_laenge(signatures) + " 个签名"
+    gebe_zurueck aggregated
+Ende Funktion
+```
+示例555：秘密共享 - Shamir方案
+```starc
+Funktion shamir_secret_split(secret, threshold, n)
+    // Shamir秘密共享 - 分割
+    // 参数: secret - 秘密值, threshold - 恢复阈值, n - 共享份数
+    // 返回值: 共享列表 [(x, y)]
+    // 1. 生成随机多项式系数 a[1..threshold-1]
+    coefficients = []
+    i = 1
+    Solange i < threshold
+        coeff = zufall_ganz(1, prime_mod())
+        liste_einfuegen(coefficients, coeff)
+        i = i + 1
+    Ende Solange
+    // 2. 计算 n 个共享
+    shares = []
+    i = 1
+    Solange i <= n
+        x = i
+        // 计算 f(x) = secret + a1*x + a2*x^2 + ... + a_{t-1}*x^{t-1}
+        y = secret
+        power = x
+        j = 0
+        Solange j < liste_laenge(coefficients)
+            coeff = liste_abrufen(coefficients, j)
+            y = y + coeff * power
+            power = power * x
+            j = j + 1
+        Ende Solange
+        y = y % prime_mod()
+        liste_einfuegen(shares, {"x": x, "y": y})
+        i = i + 1
+    Ende Solange
+    Ausgeben "Shamir秘密共享完成，" + n + " 份共享，阈值: " + threshold
+    gebe_zurueck shares
+Ende Funktion
+Funktion shamir_secret_recover(shares, threshold)
+    // Shamir秘密共享 - 恢复
+    // 参数: shares - 共享列表 (至少threshold个), threshold - 阈值
+    // 返回值: 恢复的秘密
+    // 使用拉格朗日插值: f(0) = sum(y_i * L_i(0))
+    secret = 0
+    i = 0
+    Solange i < threshold
+        share_i = liste_abrufen(shares, i)
+        xi = share_i.x
+        yi = share_i.y
+        // 计算拉格朗日基多项式 L_i(0)
+        li = 1
+        j = 0
+        Solange j < threshold
+            Wenn j != i dann
+                share_j = liste_abrufen(shares, j)
+                xj = share_j.x
+                li = li * (0 - xj) / (xi - xj)
+            Ende Wenn
+            j = j + 1
+        Ende Solange
+        secret = secret + yi * li
+        i = i + 1
+    Ende Solange
+    secret = secret % prime_mod()
+    Ausgeben "Shamir秘密恢复完成"
+    gebe_zurueck secret
+Ende Funktion
+```
+示例556：全同态加密 - 加法同态
+```starc
+Funktion homomorphic_encrypt(value, public_key)
+    // Paillier同态加密 (加法同态)
+    // 参数: value - 明文值, public_key - 公钥 (n, g)
+    // 返回值: 密文
+    n = public_key.n
+    g = public_key.g
+    // 选择随机数 r (与n互质)
+    r = zufall_ganz(1, n)
+    Solange gcd(r, n) != 1
+        r = zufall_ganz(1, n)
+    Ende Solange
+    // 密文 = g^value * r^n mod n^2
+    n_sq = n * n
+    c1 = mod_pow(g, value, n_sq)
+    c2 = mod_pow(r, n, n_sq)
+    ciphertext = (c1 * c2) % n_sq
+    Ausgeben "同态加密完成，明文: " + value
+    gebe_zurueck ciphertext
+Ende Funktion
+Funktion homomorphic_add(cipher1, cipher2, public_key)
+    // 同态加法: E(a) * E(b) = E(a+b)
+    // 参数: cipher1, cipher2 - 两个密文, public_key - 公钥
+    // 返回值: 加法结果密文
+    n_sq = public_key.n * public_key.n
+    result = (cipher1 * cipher2) % n_sq
+    Ausgeben "同态加法完成"
+    gebe_zurueck result
+Ende Funktion
+Funktion homomorphic_decrypt(ciphertext, private_key, public_key)
+    // Paillier解密
+    // 参数: ciphertext - 密文, private_key - 私钥, public_key - 公钥
+    // 返回值: 明文
+    n = public_key.n
+    n_sq = n * n
+    lambda = private_key.lambda
+    // 计算 L(c^lambda mod n^2) / L(g^lambda mod n^2)
+    x = mod_pow(ciphertext, lambda, n_sq)
+    l1 = (x - 1) / n
+    y = mod_pow(public_key.g, lambda, n_sq)
+    l2 = (y - 1) / n
+    mu = mod_inverse(l2, n)
+    plaintext = (l1 * mu) % n
+    Ausgeben "同态解密完成，明文: " + plaintext
+    gebe_zurueck plaintext
+Ende Funktion
+```
+示例557：数字时间戳服务
+```starc
+Funktion timestamp_create(document_hash, timestamp_authority)
+    // 数字时间戳服务 (基于区块链)
+    // 参数: document_hash - 文档哈希, timestamp_authority - 时间戳权威机构
+    // 返回值: 时间戳凭证
+    // 1. 获取当前时间
+    current_time = jetzt()
+    // 2. 构造时间戳请求
+    request = {
+        "hash": document_hash,
+        "time": current_time,
+        "authority": timestamp_authority
+    }
+    // 3. 对请求进行签名
+    request_hash = hash_sha256(request)
+    signature = timestamp_authority.sign(request_hash)
+    // 4. 生成时间戳凭证
+    certificate = {
+        "document_hash": document_hash,
+        "timestamp": current_time,
+        "signature": signature,
+        "authority": timestamp_authority.id
+    }
+    // 5. 将凭证提交到区块链
+    blockchain_append(certificate)
+    Ausgeben "时间戳凭证生成完成，时间: " + current_time
+    gebe_zurueck certificate
+Ende Funktion
+Funktion timestamp_verify(certificate)
+    // 验证时间戳凭证
+    // 参数: certificate - 时间戳凭证
+    // 返回值: 是否有效
+    // 1. 验证签名
+    request = {
+        "hash": certificate.document_hash,
+        "time": certificate.timestamp,
+        "authority": certificate.authority
+    }
+    request_hash = hash_sha256(request)
+    valid = verify_signature(request_hash, certificate.signature, certificate.authority)
+    // 2. 验证时间戳是否合理 (不能在未来)
+    Wenn certificate.timestamp > jetzt() + 300 then
+        Ausgeben "时间戳无效: 在未来"
+        gebe_zurueck falsch
+    Ende Wenn
+    // 3. 验证区块链中是否存在
+    exists = blockchain_contains(certificate)
+    Wenn valid and exists then
+        Ausgeben "时间戳验证通过"
+        gebe_zurueck wahr
+    Sonst
+        Ausgeben "时间戳验证失败"
+        gebe_zurueck falsch
+    Ende Wenn
+Ende Funktion
+```
+---
+第五十九批：分布式系统实战（571-590）
+示例571：分布式配置中心
+```starc
+Funktion config_center_init()
+    // 分布式配置中心初始化
+    // 返回值: 配置中心对象
+    config = {
+        "data": {},
+        "version": 0,
+        "watchers": [],
+        "consensus": konsensus_init()
+    }
+    Ausgeben "配置中心初始化完成"
+    gebe_zurueck config
+Ende Funktion
+Funktion config_set(key, value, config_center)
+    // 设置配置项 (共识写入)
+    // 参数: key - 配置键, value - 配置值, config_center - 配置中心
+    // 1. 通过共识写入
+    proposal = {"key": key, "value": value, "version": config_center.version + 1}
+    consensus_result = raft_propose(proposal, config_center.consensus)
+    Wenn consensus_result.success then
+        config_center.data[key] = value
+        config_center.version = config_center.version + 1
+        // 通知所有观察者
+        notify_watchers(config_center.watchers, key, value)
+        Ausgeben "配置更新成功: " + key + " = " + value
+        gebe_zurueck wahr
+    Sonst
+        Ausgeben "配置更新失败"
+        gebe_zurueck falsch
+    Ende Wenn
+Ende Funktion
+```
+示例572：分布式会话管理
+```starc
+Funktion session_manager_create(ttl)
+    // 分布式会话管理器
+    // 参数: ttl - 会话过期时间(秒)
+    // 返回值: 会话管理器
+    manager = {
+        "sessions": {},
+        "ttl": ttl,
+        "cleanup_interval": 60
+    }
+    // 启动清理协程
+    session_cleanup_loop(manager)
+    Ausgeben "会话管理器创建完成，TTL: " + ttl
+    gebe_zurueck manager
+Ende Funktion
+Funktion session_create(manager, user_id)
+    // 创建会话
+    // 参数: manager - 会话管理器, user_id - 用户ID
+    // 返回值: 会话ID
+    session_id = uuid_generate()
+    session = {
+        "id": session_id,
+        "user_id": user_id,
+        "created_at": jetzt(),
+        "expires_at": jetzt() + manager.ttl,
+        "data": {}
+    }
+    manager.sessions[session_id] = session
+    Ausgeben "会话创建成功: " + session_id
+    gebe_zurueck session_id
+Ende Funktion
+Funktion session_get(manager, session_id)
+    // 获取会话
+    // 参数: manager, session_id
+    // 返回值: 会话对象 或 null
+    session = manager.sessions[session_id]
+    Wenn session == null then
+        Ausgeben "会话不存在: " + session_id
+        gebe_zurueck null
+    Ende Wenn
+    // 检查是否过期
+    Wenn jetzt() > session.expires_at then
+        // 删除过期会话
+        session_delete(manager, session_id)
+        Ausgeben "会话已过期: " + session_id
+        gebe_zurueck null
+    Ende Wenn
+    // 续期
+    session.expires_at = jetzt() + manager.ttl
+    Ausgeben "会话获取成功: " + session_id
+    gebe_zurueck session
+Ende Funktion
+```
+示例573：分布式限流器
+```starc
+Funktion rate_limiter_create(limit, window_seconds)
+    // 分布式限流器 (滑动窗口)
+    // 参数: limit - 限制次数, window_seconds - 窗口大小(秒)
+    // 返回值: 限流器
+    limiter = {
+        "limit": limit,
+        "window": window_seconds,
+        "requests": {},
+        "backend": shared_storage()
+    }
+    Ausgeben "限流器创建完成，限制: " + limit + "/" + window_seconds + "s"
+    gebe_zurueck limiter
+Ende Funktion
+Funktion rate_limiter_allow(limiter, key)
+    // 检查是否允许请求
+    // 参数: limiter - 限流器, key - 限流键 (如IP或用户ID)
+    // 返回值: 是否允许
+    current_time = jetzt()
+    window_start = current_time - limiter.window
+    // 从存储获取请求记录
+    requests = limiter.backend.get(key)
+    Wenn requests == null then
+        requests = []
+    Ende Wenn
+    // 清理过期记录
+    filtered = []
+    i = 0
+    Solange i < liste_laenge(requests)
+        timestamp = liste_abrufen(requests, i)
+        Wenn timestamp > window_start then
+            liste_einfuegen(filtered, timestamp)
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    // 检查是否超过限制
+    Wenn liste_laenge(filtered) < limiter.limit then
+        // 添加当前请求
+        liste_einfuegen(filtered, current_time)
+        limiter.backend.set(key, filtered)
+        Ausgeben "限流器允许请求，当前: " + liste_laenge(filtered) + "/" + limiter.limit
+        gebe_zurueck wahr
+    Sonst
+        Ausgeben "限流器拒绝请求，达到限制"
+        gebe_zurueck falsch
+    Ende Wenn
+Ende Funktion
+```
+示例574：分布式任务队列
+```starc
+Funktion task_queue_create(name)
+    // 分布式任务队列
+    // 参数: name - 队列名称
+    // 返回值: 任务队列
+    queue = {
+        "name": name,
+        "tasks": [],
+        "processing": {},
+        "backend": redis_storage()
+    }
+    Ausgeben "任务队列创建: " + name
+    gebe_zurueck queue
+Ende Funktion
+Funktion task_enqueue(queue, task_type, payload, priority)
+    // 入队任务
+    // 参数: queue - 任务队列, task_type - 任务类型
+    // payload - 任务数据, priority - 优先级 (0-100)
+    task = {
+        "id": uuid_generate(),
+        "type": task_type,
+        "payload": payload,
+        "priority": priority,
+        "created_at": jetzt(),
+        "status": "pending"
+    }
+    // 按优先级插入
+    inserted = falsch
+    i = 0
+    Solange i < liste_laenge(queue.tasks) and not inserted
+        existing = liste_abrufen(queue.tasks, i)
+        Wenn priority > existing.priority then
+            liste_einfuegen(queue.tasks, i, task)
+            inserted = wahr
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    Wenn not inserted then
+        liste_einfuegen(queue.tasks, task)
+    Ende Wenn
+    Ausgeben "任务入队: " + task.id + " (优先级: " + priority + ")"
+    gebe_zurueck task.id
+Ende Funktion
+Funktion task_dequeue(queue, worker_id)
+    // 出队任务
+    // 参数: queue - 任务队列, worker_id - 工作节点ID
+    // 返回值: 任务 或 null
+    Wenn liste_laenge(queue.tasks) == 0 then
+        Ausgeben "队列为空"
+        gebe_zurueck null
+    Ende Wenn
+    // 取第一个任务
+    task = liste_abrufen(queue.tasks, 0)
+    liste_entfernen(queue.tasks, 0)
+    task.status = "processing"
+    task.worker_id = worker_id
+    task.started_at = jetzt()
+    queue.processing[task.id] = task
+    Ausgeben "任务出队: " + task.id + " 分配给 " + worker_id
+    gebe_zurueck task
+Ende Funktion
+```
+示例575：分布式调度器（Cron）
+```starc
+Funktion cron_scheduler_init()
+    // 分布式定时调度器
+    // 返回值: 调度器对象
+    scheduler = {
+        "jobs": {},
+        "executions": [],
+        "leader": "",
+        "consensus": raft_init()
+    }
+    // 启动调度循环
+    cron_run_loop(scheduler)
+    Ausgeben "Cron调度器初始化完成"
+    gebe_zurueck scheduler
+Ende Funktion
+Funktion cron_schedule(scheduler, job_name, cron_expr, task)
+    // 调度定时任务
+    // 参数: scheduler - 调度器, job_name - 任务名称
+    // cron_expr - Cron表达式, task - 任务函数
+    // 解析Cron表达式
+    schedule = parse_cron(cron_expr)
+    job = {
+        "name": job_name,
+        "schedule": schedule,
+        "task": task,
+        "last_run": 0,
+        "next_run": schedule.next(jetzt())
+    }
+    scheduler.jobs[job_name] = job
+    // 通过共识同步
+    consensus_sync(scheduler.consensus, job)
+    Ausgeben "Cron任务调度成功: " + job_name + " " + cron_expr
+    gebe_zurueck job
+Ende Funktion
+Funktion cron_execute_job(scheduler, job_name)
+    // 执行调度任务
+    // 参数: scheduler - 调度器, job_name - 任务名称
+    job = scheduler.jobs[job_name]
+    Wenn job == null then
+        Ausgeben "任务不存在: " + job_name
+        gebe_zurueck falsch
+    Ende Wenn
+    // 执行任务
+    Ausgeben "开始执行Cron任务: " + job_name
+    start_time = jetzt()
+    result = job.task()
+    end_time = jetzt()
+    // 记录执行结果
+    execution = {
+        "job": job_name,
+        "start": start_time,
+        "end": end_time,
+        "duration": end_time - start_time,
+        "result": result
+    }
+    liste_einfuegen(scheduler.executions, execution)
+    // 更新下次执行时间
+    job.last_run = start_time
+    job.next_run = job.schedule.next(end_time)
+    Ausgeben "Cron任务执行完成: " + job_name + " (耗时: " + (end_time - start_time) + "ms)"
+    gebe_zurueck result
+Ende Funktion
+```
+示例576：分布式跟踪（分布式追踪）
+```starc
+Funktion trace_span_start(trace_id, parent_span_id, operation_name)
+    // 分布式追踪 - 开始Span
+    // 参数: trace_id - 追踪ID, parent_span_id - 父Span ID
+    // operation_name - 操作名称
+    // 返回值: Span对象
+    span = {
+        "trace_id": trace_id,
+        "span_id": uuid_generate(),
+        "parent_span_id": parent_span_id,
+        "operation_name": operation_name,
+        "start_time": jetzt(),
+        "end_time": 0,
+        "tags": {},
+        "logs": []
+    }
+    Ausgeben "Span开始: " + operation_name + " (trace: " + trace_id + ")"
+    gebe_zurueck span
+Ende Funktion
+Funktion trace_span_end(span)
+    // 结束Span
+    // 参数: span - Span对象
+    span.end_time = jetzt()
+    duration = span.end_time - span.start_time
+    // 上报到追踪系统
+    trace_reporter_submit(span)
+    Ausgeben "Span结束: " + span.operation_name + " (耗时: " + duration + "ms)"
+    gebe_zurueck span
+Ende Funktion
+Funktion trace_add_tag(span, key, value)
+    // 添加标签
+    // 参数: span - Span对象, key - 标签键, value - 标签值
+    span.tags[key] = value
+    Ausgeben "Span添加标签: " + key + "=" + value
+Ende Funktion
+```
+示例577：分布式日志聚合
+```starc
+Funktion log_aggregator_init()
+    // 分布式日志聚合器
+    // 返回值: 聚合器对象
+    aggregator = {
+        "streams": {},
+        "buffer": [],
+        "batch_size": 100,
+        "flush_interval": 5,
+        "backend": elasticsearch_client()
+    }
+    Ausgeben "日志聚合器初始化完成"
+    gebe_zurueck aggregator
+Ende Funktion
+Funktion log_append(aggregator, service, level, message, fields)
+    // 追加日志
+    // 参数: aggregator - 聚合器, service - 服务名
+    // level - 日志级别, message - 日志消息, fields - 额外字段
+    log_entry = {
+        "timestamp": jetzt(),
+        "service": service,
+        "level": level,
+        "message": message,
+        "fields": fields,
+        "host": get_local_ip()
+    }
+    liste_einfuegen(aggregator.buffer, log_entry)
+    // 检查是否达到批量写入阈值
+    Wenn liste_laenge(aggregator.buffer) >= aggregator.batch_size then
+        log_flush(aggregator)
+    Ende Wenn
+    Ausgeben "日志追加: [" + level + "] " + service + " - " + message
+Ende Funktion
+Funktion log_flush(aggregator)
+    // 刷新日志缓冲区
+    // 参数: aggregator - 聚合器
+    Wenn liste_laenge(aggregator.buffer) == 0 then
+        gebe_zurueck
+    Ende Wenn
+    // 批量写入后端
+    success = aggregator.backend.bulk_index(aggregator.buffer)
+    Wenn success then
+        Ausgeben "日志刷新完成，写入 " + liste_laenge(aggregator.buffer) + " 条"
+        aggregator.buffer = []
+    Sonst
+        Ausgeben "日志刷新失败，保留缓冲区"
+    Ende Wenn
+Ende Funktion
+```
+---
+第六十批：AI推理优化（591-597）
+示例591：模型量化（INT8量化）
+```starc
+Funktion quantize_model(model, calibration_data)
+    // INT8模型量化
+    // 参数: model - 浮点模型, calibration_data - 校准数据
+    // 返回值: 量化后的模型
+    quantized = {}
+    // 1. 收集每层激活值范围
+    ranges = collect_activation_ranges(model, calibration_data)
+    // 2. 计算量化参数 (scale, zero_point)
+    i = 0
+    Solange i < liste_laenge(model.layers)
+        layer = liste_abrufen(model.layers, i)
+        layer_range = ranges[layer.name]
+        // scale = (max - min) / 255
+        scale = layer_range.max / 255.0
+        // zero_point = -min / scale
+        zero_point = -layer_range.min / scale
+        // 量化权重
+        quantized_weights = []
+        j = 0
+        Solange j < liste_laenge(layer.weights)
+            w = liste_abrufen(layer.weights, j)
+            q_w = w / scale + zero_point
+            q_w = max(0, min(255, q_w))
+            liste_einfuegen(quantized_weights, q_w)
+            j = j + 1
+        Ende Solange
+        quantized[layer.name] = {
+            "weights": quantized_weights,
+            "scale": scale,
+            "zero_point": zero_point,
+            "dtype": "int8"
+        }
+        i = i + 1
+    Ende Solange
+    Ausgeben "模型量化完成，转换为INT8"
+    gebe_zurueck quantized
+Ende Funktion
+Funktion quantized_inference(quantized_model, input)
+    // 量化模型推理
+    // 参数: quantized_model - 量化模型, input - 输入数据
+    // 返回值: 推理结果
+    // 1. 量化输入
+    i = 0
+    Solange i < liste_laenge(quantized_model.layers)
+        // 反量化权重并执行计算
+        layer = liste_abrufen(quantized_model.layers, i)
+        quant_data = quantized_model[layer.name]
+        // 反量化权重: float = (int8 - zero_point) * scale
+        float_weights = []
+        j = 0
+        Solange j < liste_laenge(quant_data.weights)
+            qw = liste_abrufen(quant_data.weights, j)
+            fw = (qw - quant_data.zero_point) * quant_data.scale
+            liste_einfuegen(float_weights, fw)
+            j = j + 1
+        Ende Solange
+        // 执行推理 (使用反量化后的权重)
+        input = layer.forward(input, float_weights)
+        i = i + 1
+    Ende Solange
+    Ausgeben "量化模型推理完成"
+    gebe_zurueck input
+Ende Funktion
+```
+示例592：模型剪枝（权重裁剪）
+```starc
+Funktion prune_model(model, prune_ratio)
+    // 模型剪枝 (按权重大小)
+    // 参数: model - 原始模型, prune_ratio - 剪枝比例 (0~1)
+    // 返回值: 剪枝后的模型
+    // 1. 收集所有权重
+    all_weights = []
+    i = 0
+    Solange i < liste_laenge(model.layers)
+        layer = liste_abrufen(model.layers, i)
+        j = 0
+        Solange j < liste_laenge(layer.weights)
+            w = liste_abrufen(layer.weights, j)
+            liste_einfuegen(all_weights, {"value": w, "layer": i, "index": j})
+            j = j + 1
+        Ende Solange
+        i = i + 1
+    Ende Solange
+    // 2. 按绝对值排序
+    sorted_weights = sortiere_nach(all_weights, "abs_value")
+    // 3. 确定剪枝阈值
+    prune_count = liste_laenge(sorted_weights) * prune_ratio
+    threshold = liste_abrufen(sorted_weights, prune_count).value
+    // 4. 将小于阈值的权重置为0
+    pruned_model = model
+    i = 0
+    Solange i < liste_laenge(pruned_model.layers)
+        layer = liste_abrufen(pruned_model.layers, i)
+        j = 0
+        Solange j < liste_laenge(layer.weights)
+            Wenn abs(liste_abrufen(layer.weights, j)) <= threshold then
+                liste_abrufen(pruned_model.layers, i).weights[j] = 0
+                layer.pruned_count = layer.pruned_count + 1
+            Ende Wenn
+            j = j + 1
+        Ende Solange
+        i = i + 1
+    Ende Solange
+    Ausgeben "模型剪枝完成，剪枝比例: " + prune_ratio
+    gebe_zurueck pruned_model
+Ende Funktion
+```
+示例593：知识蒸馏
+```starc
+Funktion knowledge_distillation(teacher_model, student_model, data_loader, temperature)
+    // 知识蒸馏训练
+    // 参数: teacher_model - 教师模型, student_model - 学生模型
+    // data_loader - 数据加载器, temperature - 蒸馏温度
+    // 返回值: 蒸馏后的学生模型
+    epochen = 20
+    epoch = 0
+    Solange epoch < epochen
+        total_loss = 0
+        batch_idx = 0
+        Solange batch_idx < data_loader.batches
+            // 获取数据
+            batch = data_loader.get_batch(batch_idx)
+            inputs = batch.inputs
+            labels = batch.labels
+            // 教师模型输出 (不更新梯度)
+            teacher_logits = teacher_model.forward(inputs)
+            // 学生模型输出
+            student_logits = student_model.forward(inputs)
+            // 蒸馏损失: KL散度
+            soft_teacher = softmax(teacher_logits / temperature)
+            soft_student = softmax(student_logits / temperature)
+            distill_loss = kl_divergence(soft_student, soft_teacher) * (temperature^2)
+            // 硬标签损失
+            hard_loss = cross_entropy(student_logits, labels)
+            // 总损失
+            alpha = 0.7
+            loss = alpha * distill_loss + (1 - alpha) * hard_loss
+            total_loss = total_loss + loss
+            // 反向传播
+            student_model.backward(loss)
+            student_model.update()
+            batch_idx = batch_idx + 1
+        Ende Solange
+        Ausgeben "蒸馏轮次 " + epoch + " 完成，平均损失: " + (total_loss / data_loader.batches)
+        epoch = epoch + 1
+    Ende Solange
+    Ausgeben "知识蒸馏完成"
+    gebe_zurueck student_model
+Ende Funktion
+``
+08.09 17:19
+starc语言示例库〈12〉〈续〉〈2〉
+---
+starc语言示例库〈12〉—— 示例594-610
+示例594：Batch推理优化
+```starc
+Funktion batch_inference_optimizer(model)
+    // Batch推理优化器
+    // 参数: model - 推理模型
+    // 返回值: 优化后的批处理推理函数
+    Funktion batch_predict(inputs, batch_size)
+        // 批量推理
+        results = []
+        i = 0
+        Solange i < liste_laenge(inputs)
+            // 取一个batch
+            batch = []
+            j = 0
+            Solange j < batch_size and i + j < liste_laenge(inputs)
+                liste_einfuegen(batch, liste_abrufen(inputs, i + j))
+                j = j + 1
+            Ende Solange
+            // 批量推理
+            batch_result = model.forward(batch)
+            // 合并结果
+            k = 0
+            Solange k < liste_laenge(batch_result)
+                liste_einfuegen(results, liste_abrufen(batch_result, k))
+                k = k + 1
+            Ende Solange
+            i = i + batch_size
+        Ende Solange
+        Ausgeben "Batch推理完成，批次: " + batch_size + "，总数: " + liste_laenge(inputs)
+        gebe_zurueck results
+    Ende Funktion
+    gebe_zurueck batch_predict
+Ende Funktion
+```
+示例595：模型并行训练（张量并行）
+```starc
+Funktion tensor_parallel_train(model, data, devices)
+    // 张量并行训练
+    // 参数: model - 模型, data - 训练数据, devices - 设备列表
+    // 将模型参数分布到多个设备
+    i = 0
+    Solange i < liste_laenge(devices)
+        device = liste_abrufen(devices, i)
+        // 分配模型参数子集
+        layer_start = i * liste_laenge(model.layers) / liste_laenge(devices)
+        layer_end = (i + 1) * liste_laenge(model.layers) / liste_laenge(devices)
+        model_part = {
+            "layers": model.layers[layer_start:layer_end],
+            "device": device
+        }
+        device.load(model_part)
+        i = i + 1
+    Ende Solange
+    // 训练循环
+    epoch = 0
+    Solange epoch < model.epochs
+        // 前向传播 (各设备并行)
+        outputs = []
+        i = 0
+        Solange i < liste_laenge(devices)
+            device = liste_abrufen(devices, i)
+            // 各设备计算自己的部分
+            output = device.forward(data[i])
+            liste_einfuegen(outputs, output)
+            i = i + 1
+        Ende Solange
+        // 聚合结果
+        total_output = aggregate_outputs(outputs)
+        // 计算损失
+        loss = compute_loss(total_output, data.labels)
+        // 反向传播 (各设备并行)
+        i = 0
+        Solange i < liste_laenge(devices)
+            device = liste_abrufen(devices, i)
+            device.backward(loss)
+            device.update()
+            i = i + 1
+        Ende Solange
+        Ausgeben "张量并行训练轮次 " + epoch + " 完成，损失: " + loss
+        epoch = epoch + 1
+    Ende Solange
+    Ausgeben "张量并行训练完成"
+Ende Funktion
+```
+示例596：GPU内存优化 - 梯度检查点
+```starc
+Funktion gradient_checkpointing(model, inputs, checkpoint_layers)
+    // 梯度检查点 - 减少GPU内存占用
+    // 参数: model - 模型, inputs - 输入
+    // checkpoint_layers - 需要检查点的层序号
+    // 1. 前向传播: 只保存检查点层的输出
+    activations = []
+    intermediates = []
+    i = 0
+    Solange i < liste_laenge(model.layers)
+        layer = liste_abrufen(model.layers, i)
+        // 检查是否需要检查点
+        if liste_enthaltet(checkpoint_layers, i) then
+            // 保存检查点 (只保存输入，不保存中间激活)
+            liste_einfuegen(activations, {"type": "checkpoint", "input": inputs})
+            // 执行前向
+            inputs = layer.forward_without_save(inputs)
+            liste_einfuegen(intermediates, {"type": "checkpoint", "output": inputs})
+        Sonst
+            // 正常前向 (会保存所有中间激活用于反向)
+            liste_einfuegen(activations, {"type": "normal", "input": inputs})
+            inputs = layer.forward(inputs)
+            liste_einfuegen(intermediates, {"type": "normal", "output": inputs})
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    // 2. 反向传播: 重新计算检查点层
+    loss = compute_loss(inputs)
+    // 反向传播...
+    Ausgeben "梯度检查点完成，内存节省: " + (100 - (100 * liste_laenge(checkpoint_layers) / liste_laenge(model.layers))) + "%"
+    gebe_zurueck loss
+Ende Funktion
+```
+示例597：混合精度训练
+```starc
+Funktion mixed_precision_train(model, data)
+    // 混合精度训练 (FP16 + FP32)
+    // 参数: model - 模型, data - 训练数据
+    // 1. 创建FP16副本
+    fp16_model = convert_to_fp16(model)
+    // 2. 主权重保持FP32
+    master_weights = model.weights
+    // 3. 训练循环
+    epoch = 0
+    Solange epoch < model.epochs
+        batch_idx = 0
+        Solange batch_idx < data.batches
+            batch = data.get_batch(batch_idx)
+            // 将输入转换为FP16
+            fp16_input = convert_to_fp16(batch.inputs)
+            // FP16前向
+            fp16_output = fp16_model.forward(fp16_input)
+            // 计算损失 (FP32)
+            loss = compute_loss(fp16_output, batch.labels)
+            // 缩放损失以防止梯度下溢
+            scaled_loss = loss * 1024.0
+            // FP16反向传播
+            grads = fp16_model.backward(scaled_loss)
+            // 将梯度缩回并更新主权重 (FP32)
+            grads = grads / 1024.0
+            master_weights = update_weights(master_weights, grads)
+            // 将主权重同步到FP16模型
+            fp16_model.weights = convert_to_fp16(master_weights)
+            batch_idx = batch_idx + 1
+        Ende Solange
+        Ausgeben "混合精度训练轮次 " + epoch + " 完成"
+        epoch = epoch + 1
+    Ende Solange
+    Ausgeben "混合精度训练完成，性能提升约 2x"
+Ende Funktion
+```
+示例598：HTTP/2 帧解析
+```starc
+Funktion http2_frame_parse(data)
+    // HTTP/2 帧解析器
+    // 参数: data - 原始数据字节
+    // 返回值: 帧对象列表
+    frames = []
+    pos = 0
+    Solange pos + 9 <= zeichenkette_laenge(data)
+        // 读取帧头 (9字节)
+        length = bytes_to_int(data[pos:pos+3])
+        typ = bytes_to_int(data[pos+3:pos+4])
+        flags = bytes_to_int(data[pos+4:pos+5])
+        stream_id = bytes_to_int(data[pos+5:pos+9]) & 0x7FFFFFFF
+        // 读取帧载荷
+        payload = ""
+        Wenn length > 0 then
+            payload = data[pos+9:pos+9+length]
+        Ende Wenn
+        frame = {
+            "type": typ,
+            "flags": flags,
+            "stream_id": stream_id,
+            "length": length,
+            "payload": payload
+        }
+        liste_einfuegen(frames, frame)
+        pos = pos + 9 + length
+    Ende Solange
+    Ausgeben "HTTP/2帧解析完成，共 " + liste_laenge(frames) + " 帧"
+    gebe_zurueck frames
+Ende Funktion
+Funktion http2_frame_create(type, flags, stream_id, payload)
+    // 创建HTTP/2帧
+    // 参数: type - 帧类型, flags - 标志位
+    // stream_id - 流ID, payload - 载荷
+    // 返回值: 二进制帧数据
+    length = zeichenkette_laenge(payload)
+    header = int_to_bytes(length, 3) + int_to_bytes(type, 1) + int_to_bytes(flags, 1) + int_to_bytes(stream_id, 4)
+    stream_id_byte = header[5:9]
+    stream_id_byte[0] = stream_id_byte[0] & 0x7F // 保留位清0
+    frame = header + payload
+    Ausgeben "HTTP/2帧创建完成，类型: " + type
+    gebe_zurueck frame
+Ende Funktion
+```
+示例599：WebSocket 协议实现
+```starc
+Funktion websocket_handshake(request)
+    // WebSocket握手
+    // 参数: request - HTTP请求头
+    // 返回值: 握手响应
+    key = request["Sec-WebSocket-Key"]
+    Wenn key == "" then
+        Ausgeben "缺少WebSocket Key"
+        gebe_zurueck null
+    Ende Wenn
+    // 计算Accept值: SHA1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11") -> base64
+    accept_key = hash_sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+    accept_key_b64 = base64_encode(accept_key)
+    response = "HTTP/1.1 101 Switching Protocols\r\n"
+    response = response + "Upgrade: websocket\r\n"
+    response = response + "Connection: Upgrade\r\n"
+    response = response + "Sec-WebSocket-Accept: " + accept_key_b64 + "\r\n\r\n"
+    Ausgeben "WebSocket握手完成"
+    gebe_zurueck response
+Ende Funktion
+Funktion websocket_frame_encode(message, opcode)
+    // WebSocket帧编码
+    // 参数: message - 消息内容, opcode - 操作码 (1=text, 2=binary)
+    // 返回值: 编码后的帧
+    data = message
+    length = zeichenkette_laenge(data)
+    header = ""
+    // FIN=1, RSV=0, opcode
+    header = header + int_to_bytes(0x80 | opcode, 1)
+    // 长度编码
+    Wenn length <= 125 then
+        header = header + int_to_bytes(0x80 | length, 1)
+    Sonst Wenn length <= 65535 then
+        header = header + int_to_bytes(0x80 | 126, 1)
+        header = header + int_to_bytes(length, 2)
+    Sonst
+        header = header + int_to_bytes(0x80 | 127, 1)
+        header = header + int_to_bytes(length, 8)
+    Ende Wenn
+    // Masking key (客户端到服务端需要掩码)
+    mask_key = zufall_byte(4)
+    header = header + mask_key
+    // 掩码处理
+    masked_data = ""
+    i = 0
+    Solange i < length
+        masked_char = zeichen_bei(data, i) ^ zeichen_bei(mask_key, i % 4)
+        masked_data = masked_data + masked_char
+        i = i + 1
+    Ende Solange
+    frame = header + masked_data
+    Ausgeben "WebSocket帧编码完成，长度: " + length
+    gebe_zurueck frame
+Ende Funktion
+```
+示例600：gRPC 协议实现
+```starc
+Funktion grpc_unary_call(method, request, metadata)
+    // gRPC一元调用
+    // 参数: method - 方法路径, request - 请求消息
+    // metadata - 元数据
+    // 返回值: 响应消息
+    // 1. 序列化请求
+    serialized = protobuf_serialize(request)
+    // 2. 构建gRPC帧
+    // 格式: 压缩标志(1字节) + 消息长度(4字节) + 消息体
+    frame = int_to_bytes(0, 1) // 无压缩
+    frame = frame + int_to_bytes(zeichenkette_laenge(serialized), 4)
+    frame = frame + serialized
+    // 3. 发送请求
+    response_frame = grpc_send(method, frame, metadata)
+    // 4. 解析响应
+    Wenn zeichenkette_laenge(response_frame) >= 5 then
+        flags = bytes_to_int(response_frame[0:1])
+        length = bytes_to_int(response_frame[1:5])
+        response_data = response_frame[5:5+length]
+        response = protobuf_deserialize(response_data)
+        Ausgeben "gRPC调用完成: " + method
+        gebe_zurueck response
+    Sonst
+        Ausgeben "gRPC调用失败"
+        gebe_zurueck null
+    Ende Wenn
+Ende Funktion
+Funktion grpc_streaming_call(method, requests, metadata)
+    // gRPC流式调用
+    // 参数: method - 方法路径, requests - 请求流
+    // metadata - 元数据
+    // 返回值: 响应流
+    responses = []
+    i = 0
+    Solange i < liste_laenge(requests)
+        request = liste_abrufen(requests, i)
+        response = grpc_unary_call(method, request, metadata)
+        liste_einfuegen(responses, response)
+        i = i + 1
+    Ende Solange
+    Ausgeben "gRPC流式调用完成，消息数: " + liste_laenge(responses)
+    gebe_zurueck responses
+Ende Funktion
+```
+示例601：QUIC 协议 - 连接建立
+```starc
+Funktion quic_handshake_init()
+    // QUIC握手初始化 (简化版)
+    // 返回值: 握手状态
+    // 1. 生成连接ID
+    conn_id = zufall_byte(8)
+    // 2. 生成初始密钥
+    initial_key = zufall_byte(32)
+    // 3. 构建Client Hello
+    client_hello = {
+        "conn_id": conn_id,
+        "version": "QUIC v1",
+        "initial_key": initial_key,
+        "supported_alpns": ["h3", "h2"]
+    }
+    // 4. 加密Client Hello
+    encrypted_hello = quic_encrypt(client_hello, initial_key)
+    // 5. 发送到服务器
+    server_response = quic_send(encrypted_hello)
+    // 6. 解密Server Hello
+    server_hello = quic_decrypt(server_response, initial_key)
+    Ausgeben "QUIC握手完成，连接ID: " + conn_id
+    gebe_zurueck {"conn_id": conn_id, "key": initial_key, "server_hello": server_hello}
+Ende Funktion
+```
+示例602：MQTT 协议实现
+```starc
+Funktion mqtt_connect(client_id, username, password, keep_alive)
+    // MQTT连接
+    // 参数: client_id - 客户端ID, username - 用户名
+    // password - 密码, keep_alive - 保活时间(秒)
+    // 返回值: 连接状态
+    // 构建CONNECT报文
+    flags = 0
+    Wenn username != "" then flags = flags | 0x80
+    Wenn password != "" then flags = flags | 0x40
+    // 固定头: 类型=1 (CONNECT), flags=0
+    packet = int_to_bytes(0x10, 1)
+    // 可变头: 协议名 + 协议级别 + 连接标志 + 保活时间
+    protocol_name = "MQTT"
+    protocol_len = zeichenkette_laenge(protocol_name)
+    remaining = ""
+    remaining = remaining + int_to_bytes(protocol_len, 2) + protocol_name
+    remaining = remaining + int_to_bytes(4, 1) // 协议级别 MQTT 3.1.1
+    remaining = remaining + int_to_bytes(flags, 1)
+    remaining = remaining + int_to_bytes(keep_alive, 2)
+    // 载荷: Client ID + Username + Password
+    remaining = remaining + int_to_bytes(zeichenkette_laenge(client_id), 2) + client_id
+    Wenn username != "" then
+        remaining = remaining + int_to_bytes(zeichenkette_laenge(username), 2) + username
+    Ende Wenn
+    Wenn password != "" then
+        remaining = remaining + int_to_bytes(zeichenkette_laenge(password), 2) + password
+    Ende Wenn
+    // 剩余长度编码
+    remaining_len = zeichenkette_laenge(remaining)
+    encoded_len = mqtt_encode_length(remaining_len)
+    packet = packet + encoded_len + remaining
+    // 发送CONNECT报文
+    response = mqtt_send(packet)
+    // 解析CONNACK
+    Wenn bytes_to_int(response[0:1]) == 0x20 then
+        // CONNACK: 返回码
+        return_code = bytes_to_int(response[3:4])
+        Wenn return_code == 0 then
+            Ausgeben "MQTT连接成功: " + client_id
+            gebe_zurueck wahr
+        Sonst
+            Ausgeben "MQTT连接失败，错误码: " + return_code
+            gebe_zurueck falsch
+        Ende Wenn
+    Sonst
+        Ausgeben "MQTT连接失败: 未收到CONNACK"
+        gebe_zurueck falsch
+    Ende Wenn
+Ende Funktion
+Funktion mqtt_publish(topic, payload, qos)
+    // MQTT发布消息
+    // 参数: topic - 主题, payload - 消息内容, qos - 服务质量 (0,1,2)
+    // 构建PUBLISH报文
+    flags = 0
+    Wenn qos == 1 then flags = flags | 0x02
+    Wenn qos == 2 then flags = flags | 0x04
+    packet = int_to_bytes(0x30 | flags, 1)
+    variable = ""
+    variable = variable + int_to_bytes(zeichenkette_laenge(topic), 2) + topic
+    Wenn qos > 0 then
+        packet_id = zufall_ganz(1, 65535)
+        variable = variable + int_to_bytes(packet_id, 2)
+    Ende Wenn
+    remaining = variable + payload
+    remaining_len = zeichenkette_laenge(remaining)
+    packet = packet + mqtt_encode_length(remaining_len) + remaining
+    mqtt_send(packet)
+    Ausgeben "MQTT消息发布: " + topic
+Ende Funktion
+```
+示例603：DNS 解析器实现
+```starc
+Funktion dns_resolve(domain, record_type)
+    // DNS域名解析
+    // 参数: domain - 域名, record_type - 记录类型 (A, AAAA, CNAME)
+    // 返回值: DNS响应记录
+    // 1. 构建DNS查询报文
+    transaction_id = zufall_ganz(0, 65535)
+    // 头部: ID + 标志 + 问题数 + 回答数 + 权威数 + 额外数
+    header = int_to_bytes(transaction_id, 2)
+    header = header + int_to_bytes(0x0100, 2) // 标准查询, RD=1
+    header = header + int_to_bytes(1, 2) // 1个问题
+    header = header + int_to_bytes(0, 2) // 回答数
+    header = header + int_to_bytes(0, 2) // 权威数
+    header = header + int_to_bytes(0, 2) // 额外数
+    // 问题部分: 域名编码
+    query = dns_encode_domain(domain)
+    // 类型和类
+    typ = 1 // A记录
+    Wenn record_type == "AAAA" then typ = 28
+    Wenn record_type == "CNAME" then typ = 5
+    query = query + int_to_bytes(typ, 2)
+    query = query + int_to_bytes(1, 2) // IN类
+    // 完整报文
+    message = header + query
+    // 2. 发送到DNS服务器
+    response = dns_udp_send(message, "8.8.8.8", 53)
+    // 3. 解析响应
+    Wenn zeichenkette_laenge(response) < 12 then
+        Ausgeben "DNS响应无效"
+        gebe_zurueck null
+    Ende Wenn
+    // 检查ID和标志
+    resp_id = bytes_to_int(response[0:2])
+    Wenn resp_id != transaction_id then
+        Ausgeben "DNS事务ID不匹配"
+        gebe_zurueck null
+    Ende Wenn
+    flags = bytes_to_int(response[2:4])
+    Wenn (flags & 0x8000) == 0 then
+        Ausgeben "DNS响应标志错误"
+        gebe_zurueck null
+    Ende Wenn
+    // 提取回答
+    answers = dns_extract_answers(response)
+    Ausgeben "DNS解析完成: " + domain + " -> " + answers
+    gebe_zurueck answers
+Ende Funktion
+Funktion dns_encode_domain(domain)
+    // DNS域名编码
+    // 参数: domain - 域名 (如 "www.example.com")
+    // 返回值: 编码后的域名 (长度+标签)
+    parts = zeichenkette_teilen(domain, ".")
+    encoded = ""
+    i = 0
+    Solange i < liste_laenge(parts)
+        part = liste_abrufen(parts, i)
+        encoded = encoded + int_to_bytes(zeichenkette_laenge(part), 1)
+        encoded = encoded + part
+        i = i + 1
+    Ende Solange
+    encoded = encoded + int_to_bytes(0, 1) // 终止符
+    gebe_zurueck encoded
+Ende Funktion
+```
+示例604：RPC 框架实现
+```starc
+Funktion rpc_server_init(service, port)
+    // RPC服务器初始化
+    // 参数: service - 服务对象, port - 监听端口
+    // 返回值: RPC服务器
+    server = {
+        "service": service,
+        "port": port,
+        "methods": {},
+        "middleware": []
+    }
+    // 注册方法
+    i = 0
+    Solange i < liste_laenge(service.methods)
+        method = liste_abrufen(service.methods, i)
+        server.methods[method.name] = method
+        i = i + 1
+    Ende Solange
+    // 启动监听
+    rpc_start_listen(server)
+    Ausgeben "RPC服务器启动，端口: " + port
+    gebe_zurueck server
+Ende Funktion
+Funktion rpc_client_call(server_addr, method_name, params)
+    // RPC客户端调用
+    // 参数: server_addr - 服务器地址, method_name - 方法名
+    // params - 参数列表
+    // 返回值: 调用结果
+    // 1. 构建RPC请求
+    request = {
+        "jsonrpc": "2.0",
+        "method": method_name,
+        "params": params,
+        "id": uuid_generate()
+    }
+    // 2. 序列化为JSON
+    json_request = json_encode(request)
+    // 3. 发送请求
+    response = http_post(server_addr + "/rpc", json_request)
+    // 4. 解析响应
+    Wenn response != "" then
+        result = json_decode(response)
+        Wenn result.error != null then
+            Ausgeben "RPC错误: " + result.error.message
+            gebe_zurueck null
+        Ende Wenn
+        Ausgeben "RPC调用成功: " + method_name
+        gebe_zurueck result.result
+    Sonst
+        Ausgeben "RPC调用失败"
+        gebe_zurueck null
+    Ende Wenn
+Ende Funktion
+```
+示例605：消息总线（Event Bus）
+```starc
+Funktion event_bus_create()
+    // 事件总线
+    // 返回值: 事件总线对象
+    bus = {
+        "subscribers": {},
+        "async": wahr
+    }
+    Ausgeben "事件总线创建完成"
+    gebe_zurueck bus
+Ende Funktion
+Funktion event_subscribe(bus, event_type, callback)
+    // 订阅事件
+    // 参数: bus - 事件总线, event_type - 事件类型
+    // callback - 回调函数
+    Wenn bus.subscribers[event_type] == null then
+        bus.subscribers[event_type] = []
+    Ende Wenn
+    liste_einfuegen(bus.subscribers[event_type], callback)
+    Ausgeben "事件订阅: " + event_type
+Ende Funktion
+Funktion event_publish(bus, event_type, data)
+    // 发布事件
+    // 参数: bus - 事件总线, event_type - 事件类型
+    // data - 事件数据
+    subscribers = bus.subscribers[event_type]
+    Wenn subscribers == null then
+        Ausgeben "没有订阅者: " + event_type
+        gebe_zurueck
+    Ende Wenn
+    i = 0
+    Solange i < liste_laenge(subscribers)
+        callback = liste_abrufen(subscribers, i)
+        // 异步执行回调
+        Wenn bus.async then
+            spawn_thread(callback, data)
+        Sonst
+            callback(data)
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    Ausgeben "事件发布: " + event_type + " (" + liste_laenge(subscribers) + " 个订阅者)"
+Ende Funktion
+```
+示例606：Lua 脚本引擎集成
+```starc
+Funktion lua_engine_init()
+    // Lua脚本引擎初始化
+    // 返回值: Lua引擎对象
+    engine = {
+        "state": lua_new_state(),
+        "globals": {}
+    }
+    // 注册starc函数到Lua
+    lua_register_function(engine.state, "op_DateiVorhanden", op_DateiVorhanden)
+    lua_register_function(engine.state, "liste_laenge", liste_laenge)
+    // 加载标准库
+    lua_load_stdlib(engine.state)
+    Ausgeben "Lua引擎初始化完成"
+    gebe_zurueck engine
+Ende Funktion
+Funktion lua_execute(engine, script)
+    // 执行Lua脚本
+    // 参数: engine - Lua引擎, script - Lua脚本
+    // 返回值: 执行结果
+    result = lua_run(engine.state, script)
+    Ausgeben "Lua脚本执行完成"
+    gebe_zurueck result
+Ende Funktion
+```
+示例607：热更新机制
+```starc
+Funktion hot_reload_manager_init()
+    // 热更新管理器
+    // 返回值: 热更新管理器
+    manager = {
+        "modules": {},
+        "watchers": [],
+        "version": 0
+    }
+    Ausgeben "热更新管理器初始化完成"
+    gebe_zurueck manager
+Ende Funktion
+Funktion hot_reload_module(manager, module_path)
+    // 加载/重载模块
+    // 参数: manager - 管理器, module_path - 模块路径
+    // 返回值: 模块对象
+    // 1. 检查文件是否变化
+    current_mtime = file_mtime(module_path)
+    existing = manager.modules[module_path]
+    Wenn existing != null and existing.mtime == current_mtime then
+        Ausgeben "模块无变化: " + module_path
+        gebe_zurueck existing.module
+    Ende Wenn
+    // 2. 加载新模块
+    new_module = load_module(module_path)
+    // 3. 更新管理器
+    manager.modules[module_path] = {
+        "module": new_module,
+        "mtime": current_mtime,
+        "version": manager.version + 1
+    }
+    manager.version = manager.version + 1
+    // 4. 通知所有观察者
+    notify_reload(manager.watchers, module_path, new_module)
+    Ausgeben "模块热更新: " + module_path + " (版本: " + manager.version + ")"
+    gebe_zurueck new_module
+Ende Funktion
+```
+示例608：自动化测试框架
+```starc
+Funktion test_suite_create(name)
+    // 测试套件创建
+    // 参数: name - 测试套件名称
+    // 返回值: 测试套件对象
+    suite = {
+        "name": name,
+        "tests": [],
+        "setup": null,
+        "teardown": null,
+        "results": []
+    }
+    Ausgeben "测试套件创建: " + name
+    gebe_zurueck suite
+Ende Funktion
+Funktion test_case_add(suite, name, test_fn)
+    // 添加测试用例
+    // 参数: suite - 测试套件, name - 测试名称
+    // test_fn - 测试函数 (返回布尔值)
+    test = {
+        "name": name,
+        "fn": test_fn,
+        "result": null,
+        "error": null,
+        "duration": 0
+    }
+    liste_einfuegen(suite.tests, test)
+    Ausgeben "测试用例添加: " + name
+Ende Funktion
+Funktion test_suite_run(suite)
+    // 运行测试套件
+    // 参数: suite - 测试套件
+    // 返回值: 测试结果统计
+    passed = 0
+    failed = 0
+    // 执行setup
+    Wenn suite.setup != null then
+        suite.setup()
+    Ende Wenn
+    i = 0
+    Solange i < liste_laenge(suite.tests)
+        test = liste_abrufen(suite.tests, i)
+        start = jetzt()
+        // 执行测试
+        try
+            result = test.fn()
+            test.result = result
+            Wenn result then
+                passed = passed + 1
+                Ausgeben "✅ PASS: " + test.name
+            Sonst
+                failed = failed + 1
+                Ausgeben "❌ FAIL: " + test.name
+            Ende Wenn
+        catch (error)
+            test.error = error
+            failed = failed + 1
+            Ausgeben " ERROR: " + test.name + " - " + error
+        Ende Versuch
+        test.duration = jetzt() - start
+        i = i + 1
+    Ende Solange
+    // 执行teardown
+    Wenn suite.teardown != null then
+        suite.teardown()
+    Ende Wenn
+    Ausgeben "测试完成: " + passed + " 通过, " + failed + " 失败"
+    gebe_zurueck {"passed": passed, "failed": failed, "total": passed + failed}
+Ende Funktion
+```
+示例609：持续集成流水线
+```starc
+Funktion ci_pipeline_create(config)
+    // CI/CD流水线
+    // 参数: config - 流水线配置
+    // 返回值: 流水线对象
+    pipeline = {
+        "stages": config.stages,
+        "artifacts": [],
+        "status": "pending",
+        "start_time": 0,
+        "end_time": 0
+    }
+    Ausgeben "CI流水线创建完成"
+    gebe_zurueck pipeline
+Ende Funktion
+Funktion ci_run_pipeline(pipeline)
+    // 运行CI流水线
+    // 参数: pipeline - 流水线对象
+    // 返回值: 执行结果
+    pipeline.status = "running"
+    pipeline.start_time = jetzt()
+    i = 0
+    Solange i < liste_laenge(pipeline.stages)
+        stage = liste_abrufen(pipeline.stages, i)
+        Ausgeben "执行阶段: " + stage.name
+        // 执行阶段任务
+        stage_result = ci_execute_stage(stage)
+        Wenn stage_result == falsch then
+            pipeline.status = "failed"
+            pipeline.end_time = jetzt()
+            Ausgeben "流水线失败，阶段: " + stage.name
+            gebe_zurueck pipeline
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    pipeline.status = "success"
+    pipeline.end_time = jetzt()
+    Ausgeben "CI流水线执行成功，耗时: " + (pipeline.end_time - pipeline.start_time) + "ms"
+    gebe_zurueck pipeline
+Ende Funktion
+```
+示例610：微服务网关
+```starc
+Funktion api_gateway_init(routes)
+    // API网关初始化
+    // 参数: routes - 路由配置 [{path, service, method}]
+    // 返回值: 网关对象
+    gateway = {
+        "routes": routes,
+        "middleware": [],
+        "cache": {}
+    }
+    Ausgeben "API网关初始化完成，路由数: " + liste_laenge(routes)
+    gebe_zurueck gateway
+Ende Funktion
+Funktion api_gateway_route(gateway, request)
+    // API网关路由
+    // 参数: gateway - 网关对象, request - 请求对象
+    // 返回值: 响应对象
+    // 1. 匹配路由
+    matched_route = null
+    i = 0
+    Solange i < liste_laenge(gateway.routes)
+        route = liste_abrufen(gateway.routes, i)
+        // 检查路径匹配
+        Wenn request.path == route.path then
+            matched_route = route
+            i = liste_laenge(gateway.routes)
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    Wenn matched_route == null then
+        Ausgeben "路由未找到: " + request.path
+        gebe_zurueck {"status": 404, "body": "Not Found"}
+    Ende Wenn
+    // 2. 应用中间件
+    request = apply_middleware(gateway.middleware, request)
+    // 3. 转发请求到后端服务
+    response = forward_to_service(matched_route.service, request)
+    // 4. 缓存响应
+    Wenn matched_route.cacheable then
+        gateway.cache[request.path] = response
+    Ende Wenn
+    Ausgeben "路由完成: " + request.path + " -> " + matched_route.service
+    gebe_zurueck response
+Ende Funktion
+```
+---
+
+08.09 17:19
+starc语言示例库〈13〉
+---
+starc语言示例库〈13〉—— 示例610-660
+示例610：微服务网关（续）
+```starc
+Funktion api_gateway_route(gateway, request)
+    // API网关路由
+    // 参数: gateway - 网关对象, request - 请求对象
+    // 返回值: 响应对象
+    // 1. 匹配路由
+    matched_route = null
+    i = 0
+    Solange i < liste_laenge(gateway.routes)
+        route = liste_abrufen(gateway.routes, i)
+        // 检查路径匹配
+        Wenn request.path == route.path then
+            matched_route = route
+            i = liste_laenge(gateway.routes)
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    Wenn matched_route == null then
+        Ausgeben "路由未找到: " + request.path
+        gebe_zurueck {"status": 404, "body": "Not Found"}
+    Ende Wenn
+    // 2. 应用中间件
+    request = apply_middleware(gateway.middleware, request)
+    // 3. 转发请求到后端服务
+    response = forward_to_service(matched_route.service, request)
+    // 4. 缓存响应
+    Wenn matched_route.cacheable then
+        gateway.cache[request.path] = response
+    Ende Wenn
+    Ausgeben "路由完成: " + request.path + " -> " + matched_route.service
+    gebe_zurueck response
+Ende Funktion
+```
+示例611：WebSocket 客户端
+```starc
+Funktion websocket_client_connect(url)
+    // WebSocket客户端连接
+    // 参数: url - WebSocket URL (ws://或wss://)
+    // 返回值: WebSocket连接对象
+    // 1. 解析URL
+    parts = parse_url(url)
+    host = parts.host
+    port = parts.port
+    path = parts.path
+    // 2. 建立TCP连接
+    sock = tcp_connect(host, port)
+    // 3. 发送握手请求
+    key = base64_encode(zufall_byte(16))
+    handshake = "GET " + path + " HTTP/1.1\r\n"
+    handshake = handshake + "Host: " + host + "\r\n"
+    handshake = handshake + "Upgrade: websocket\r\n"
+    handshake = handshake + "Connection: Upgrade\r\n"
+    handshake = handshake + "Sec-WebSocket-Key: " + key + "\r\n"
+    handshake = handshake + "Sec-WebSocket-Version: 13\r\n\r\n"
+    tcp_send(sock, handshake)
+    // 4. 接收响应
+    response = tcp_recv(sock, 1024)
+    // 5. 验证握手响应
+    Wenn zeichenkette_finden(response, "101") == -1 then
+        Ausgeben "WebSocket握手失败"
+        gebe_zurueck null
+    Ende Wenn
+    ws = {
+        "socket": sock,
+        "connected": wahr,
+        "url": url
+    }
+    Ausgeben "WebSocket客户端连接成功: " + url
+    gebe_zurueck ws
+Ende Funktion
+Funktion websocket_client_send(ws, message)
+    // WebSocket发送消息
+    // 参数: ws - WebSocket连接, message - 消息内容
+    frame = websocket_frame_encode(message, 1) // 文本帧
+    tcp_send(ws.socket, frame)
+    Ausgeben "WebSocket发送: " + message
+Ende Funktion
+Funktion websocket_client_recv(ws)
+    // WebSocket接收消息
+    // 参数: ws - WebSocket连接
+    // 返回值: 接收到的消息
+    data = tcp_recv(ws.socket, 2048)
+    // 解析帧
+    frame = websocket_frame_parse(data)
+    Wenn frame.opcode == 8 then // 关闭帧
+        ws.connected = falsch
+        Ausgeben "WebSocket连接已关闭"
+        gebe_zurueck null
+    Ende Wenn
+    Ausgeben "WebSocket接收: " + frame.payload
+    gebe_zurueck frame.payload
+Ende Funktion
+```
+示例612：SSH 客户端实现
+```starc
+Funktion ssh_client_connect(host, port, username, password)
+    // SSH客户端连接
+    // 参数: host - 主机, port - 端口, username - 用户名, password - 密码
+    // 返回值: SSH会话对象
+    // 1. TCP连接
+    sock = tcp_connect(host, port)
+    // 2. SSH版本协商
+    version = ssh_send_version(sock)
+    // 3. 密钥交换
+    kex = ssh_key_exchange(sock)
+    // 4. 认证
+    auth = ssh_auth_password(sock, username, password)
+    Wenn auth == falsch then
+        Ausgeben "SSH认证失败"
+        gebe_zurueck null
+    Ende Wenn
+    // 5. 创建会话
+    session = {
+        "socket": sock,
+        "username": username,
+        "host": host,
+        "channel": null
+    }
+    Ausgeben "SSH连接成功: " + username + "@" + host
+    gebe_zurueck session
+Ende Funktion
+Funktion ssh_execute(session, command)
+    // SSH执行命令
+    // 参数: session - SSH会话, command - 命令
+    // 返回值: 命令输出
+    // 1. 打开通道
+    channel = ssh_open_channel(session.socket)
+    // 2. 发送exec请求
+    ssh_channel_exec(channel, command)
+    // 3. 接收输出
+    output = ""
+    Solange wahr
+        data = ssh_channel_read(channel, 4096)
+        Wenn data == "" then
+            break
+        Ende Wenn
+        output = output + data
+    Ende Solange
+    ssh_close_channel(channel)
+    Ausgeben "SSH命令执行完成: " + command
+    gebe_zurueck output
+Ende Funktion
+```
+示例613：DHCP 客户端
+```starc
+Funktion dhcp_client_discover()
+    // DHCP客户端 - 发现阶段
+    // 返回值: DHCP服务器IP
+    // 1. 构建DHCP Discover报文
+    xid = zufall_ganz(0, 0xFFFFFFFF)
+    packet = dhcp_build_discover(xid)
+    // 2. 广播发送 (端口67)
+    dhcp_send_broadcast(packet, 67)
+    // 3. 接收Offer
+    response = dhcp_recv(68, 10) // 10秒超时
+    Wenn response == "" then
+        Ausgeben "DHCP超时，未收到Offer"
+        gebe_zurueck null
+    Ende Wenn
+    // 4. 解析Offer
+    offer = dhcp_parse_offer(response)
+    Ausgeben "DHCP发现完成，服务器: " + offer.server_ip
+    gebe_zurueck offer
+Ende Funktion
+Funktion dhcp_client_request(offer)
+    // DHCP客户端 - 请求阶段
+    // 参数: offer - DHCP Offer
+    // 返回值: 分配的IP地址
+    // 1. 构建Request报文
+    request = dhcp_build_request(offer)
+    // 2. 发送Request
+    dhcp_send_broadcast(request, 67)
+    // 3. 接收ACK
+    ack = dhcp_recv(68, 10)
+    Wenn ack == "" then
+        Ausgeben "DHCP请求超时"
+        gebe_zurueck null
+    Ende Wenn
+    // 4. 解析ACK
+    ip = dhcp_parse_ack(ack)
+    Ausgeben "DHCP获取IP成功: " + ip
+    gebe_zurueck ip
+Ende Funktion
+```
+示例614：NTP 时间同步
+```starc
+Funktion ntp_sync(ntp_server)
+    // NTP时间同步
+    // 参数: ntp_server - NTP服务器地址
+    // 返回值: 时间偏移量(ms)
+    // 1. 构建NTP请求 (48字节)
+    packet = int_to_bytes(0x1B, 1) // LI=0, VN=3, Mode=3 (client)
+    i = 1
+    Solange i < 48
+        packet = packet + int_to_bytes(0, 1)
+        i = i + 1
+    Ende Solange
+    // 2. 记录发送时间
+    t1 = jetzt()
+    // 3. 发送UDP请求
+    response = udp_send_recv(ntp_server, 123, packet, 5)
+    // 4. 记录接收时间
+    t4 = jetzt()
+    // 5. 解析响应 (NTP时间戳在偏移40-47字节)
+    t2 = ntp_extract_timestamp(response, 32) // 原始时间戳
+    t3 = ntp_extract_timestamp(response, 40) // 接收时间戳
+    // 6. 计算偏移: offset = ((t2 - t1) + (t3 - t4)) / 2
+    offset = ((t2 - t1) + (t3 - t4)) / 2
+    Ausgeben "NTP同步完成，偏移: " + offset + "ms"
+    gebe_zurueck offset
+Ende Funktion
+```
+示例615：SMTP 邮件发送（带附件）
+```starc
+Funktion smtp_send_with_attachment(server, from, to, subject, body, attachment_path)
+    // SMTP发送带附件的邮件 (MIME)
+    // 参数: server - SMTP服务器, from - 发件人, to - 收件人
+    // subject - 主题, body - 正文, attachment_path - 附件路径
+    // 1. 连接SMTP服务器
+    sock = tcp_connect(server.host, server.port)
+    // 2. HELO
+    smtp_recv(sock)
+    smtp_send(sock, "EHLO " + server.host + "\r\n")
+    smtp_recv(sock)
+    // 3. 身份认证 (如果启用)
+    Wenn server.auth then
+        smtp_auth_login(sock, server.username, server.password)
+    Ende Wenn
+    // 4. MAIL FROM
+    smtp_send(sock, "MAIL FROM: <" + from + ">\r\n")
+    smtp_recv(sock)
+    // 5. RCPT TO
+    smtp_send(sock, "RCPT TO: <" + to + ">\r\n")
+    smtp_recv(sock)
+    // 6. DATA
+    smtp_send(sock, "DATA\r\n")
+    smtp_recv(sock)
+    // 7. 构建MIME消息
+    boundary = "----=_Part_" + zufall_ganz(10000, 99999)
+    message = "From: " + from + "\r\n"
+    message = message + "To: " + to + "\r\n"
+    message = message + "Subject: " + subject + "\r\n"
+    message = message + "MIME-Version: 1.0\r\n"
+    message = message + "Content-Type: multipart/mixed; boundary=" + boundary + "\r\n\r\n"
+    // 正文部分
+    message = message + "--" + boundary + "\r\n"
+    message = message + "Content-Type: text/plain; charset=UTF-8\r\n\r\n"
+    message = message + body + "\r\n\r\n"
+    // 附件部分
+    Wenn attachment_path != "" then
+        file_data = datei_lesen(attachment_path)
+        file_name = datei_name(attachment_path)
+        message = message + "--" + boundary + "\r\n"
+        message = message + "Content-Type: application/octet-stream\r\n"
+        message = message + "Content-Transfer-Encoding: base64\r\n"
+        message = message + "Content-Disposition: attachment; filename=\"" + file_name + "\"\r\n\r\n"
+        message = message + base64_encode(file_data) + "\r\n\r\n"
+    Ende Wenn
+    message = message + "--" + boundary + "--\r\n"
+    message = message + ".\r\n"
+    // 8. 发送邮件
+    smtp_send(sock, message)
+    smtp_recv(sock)
+    // 9. QUIT
+    smtp_send(sock, "QUIT\r\n")
+    tcp_close(sock)
+    Ausgeben "邮件发送成功: " + subject + " (含附件)"
+Ende Funktion
+```
+示例616：IMAP 邮件读取
+```starc
+Funktion imap_fetch_emails(server, username, password, folder)
+    // IMAP获取邮件列表
+    // 参数: server - IMAP服务器, username - 用户名
+    // password - 密码, folder - 文件夹 (如 "INBOX")
+    // 返回值: 邮件列表
+    // 1. 连接
+    sock = tcp_connect(server.host, server.port)
+    imap_recv(sock)
+    // 2. 登录
+    imap_send(sock, "LOGIN " + username + " " + password + "\r\n")
+    imap_recv(sock)
+    // 3. 选择文件夹
+    imap_send(sock, "SELECT " + folder + "\r\n")
+    imap_recv(sock)
+    // 4. 获取邮件列表
+    imap_send(sock, "SEARCH ALL\r\n")
+    response = imap_recv(sock)
+    // 5. 解析邮件ID
+    ids = imap_parse_search_response(response)
+    emails = []
+    i = 0
+    Solange i < liste_laenge(ids)
+        id = liste_abrufen(ids, i)
+        // 获取邮件头部
+        imap_send(sock, "FETCH " + id + " (BODY[HEADER.FIELDS (SUBJECT FROM DATE)])\r\n")
+        header = imap_recv(sock)
+        // 获取邮件正文
+        imap_send(sock, "FETCH " + id + " (BODY[TEXT])\r\n")
+        body = imap_recv(sock)
+        email = imap_parse_email(header, body)
+        liste_einfuegen(emails, email)
+        i = i + 1
+    Ende Solange
+    // 6. 断开
+    imap_send(sock, "LOGOUT\r\n")
+    tcp_close(sock)
+    Ausgeben "IMAP读取完成，共 " + liste_laenge(emails) + " 封邮件"
+    gebe_zurueck emails
+Ende Funktion
+```
+示例617：FTP 客户端
+```starc
+Funktion ftp_client_connect(host, port, username, password)
+    // FTP客户端连接
+    // 参数: host - FTP服务器, port - 端口
+    // username - 用户名, password - 密码
+    // 返回值: FTP会话
+    control = tcp_connect(host, port)
+    ftp_recv(control)
+    // 登录
+    ftp_send(control, "USER " + username + "\r\n")
+    ftp_recv(control)
+    ftp_send(control, "PASS " + password + "\r\n")
+    response = ftp_recv(control)
+    Wenn ftp_response_code(response) != 230 then
+        Ausgeben "FTP登录失败"
+        gebe_zurueck null
+    Ende Wenn
+    // 进入被动模式
+    ftp_send(control, "PASV\r\n")
+    response = ftp_recv(control)
+    ip_port = ftp_parse_pasv(response)
+    data_sock = tcp_connect(ip_port.ip, ip_port.port)
+    session = {
+        "control": control,
+        "data": data_sock,
+        "host": host,
+        "username": username
+    }
+    Ausgeben "FTP连接成功: " + username + "@" + host
+    gebe_zurueck session
+Ende Funktion
+Funktion ftp_download(session, remote_file, local_file)
+    // FTP下载文件
+    // 参数: session - FTP会话, remote_file - 远程文件路径
+    // local_file - 本地文件路径
+    ftp_send(session.control, "RETR " + remote_file + "\r\n")
+    data = tcp_recv_all(session.data)
+    datei_schreiben(local_file, data)
+    ftp_recv(session.control) // 读取传输完成响应
+    Ausgeben "FTP下载完成: " + remote_file + " -> " + local_file
+Ende Funktion
+Funktion ftp_upload(session, local_file, remote_file)
+    // FTP上传文件
+    // 参数: session - FTP会话, local_file - 本地文件
+    // remote_file - 远程文件路径
+    data = datei_lesen(local_file)
+    ftp_send(session.control, "STOR " + remote_file + "\r\n")
+    tcp_send(session.data, data)
+    tcp_close(session.data)
+    ftp_recv(session.control)
+    Ausgeben "FTP上传完成: " + local_file + " -> " + remote_file
+Ende Funktion
+```
+示例618：Redis 协议实现
+```starc
+Funktion redis_client_connect(host, port)
+    // Redis客户端连接 (RESP协议)
+    // 参数: host - Redis主机, port - 端口
+    // 返回值: Redis客户端
+    sock = tcp_connect(host, port)
+    client = {
+        "socket": sock,
+        "host": host,
+        "port": port
+    }
+    Ausgeben "Redis连接成功: " + host + ":" + port
+    gebe_zurueck client
+Ende Funktion
+Funktion redis_command(client, command, args)
+    // 执行Redis命令
+    // 参数: client - Redis客户端, command - 命令名
+    // args - 参数列表
+    // 返回值: 响应数据
+    // 构建RESP请求
+    request = "*" + (1 + liste_laenge(args)) + "\r\n"
+    request = request + "$" + zeichenkette_laenge(command) + "\r\n" + command + "\r\n"
+    i = 0
+    Solange i < liste_laenge(args)
+        arg = liste_abrufen(args, i)
+        request = request + "$" + zeichenkette_laenge(arg) + "\r\n" + arg + "\r\n"
+        i = i + 1
+    Ende Solange
+    // 发送并接收
+    tcp_send(client.socket, request)
+    response = tcp_recv(client.socket, 4096)
+    // 解析RESP响应
+    result = resp_parse(response)
+    Ausgeben "Redis命令执行: " + command
+    gebe_zurueck result
+Ende Funktion
+Funktion redis_set(client, key, value)
+    // Redis SET命令
+    // 参数: client - Redis客户端, key - 键, value - 值
+    // 返回值: 执行结果
+    result = redis_command(client, "SET", [key, value])
+    Ausgeben "Redis SET: " + key + " = " + value
+    gebe_zurueck result
+Ende Funktion
+Funktion redis_get(client, key)
+    // Redis GET命令
+    // 参数: client - Redis客户端, key - 键
+    // 返回值: 值
+    result = redis_command(client, "GET", [key])
+    Ausgeben "Redis GET: " + key + " -> " + result
+    gebe_zurueck result
+Ende Funktion
+```
+示例619：Memcached 协议实现
+```starc
+Funktion memcached_client_connect(host, port)
+    // Memcached客户端连接
+    // 参数: host - Memcached主机, port - 端口
+    // 返回值: Memcached客户端
+    sock = tcp_connect(host, port)
+    client = {
+        "socket": sock,
+        "host": host,
+        "port": port
+    }
+    Ausgeben "Memcached连接成功: " + host + ":" + port
+    gebe_zurueck client
+Ende Funktion
+Funktion memcached_set(client, key, value, flags, exptime)
+    // Memcached SET命令
+    // 参数: client - 客户端, key - 键, value - 值
+    // flags - 标志, exptime - 过期时间(秒)
+    // 返回值: 是否成功
+    command = "set " + key + " " + flags + " " + exptime + " " + zeichenkette_laenge(value) + "\r\n"
+    command = command + value + "\r\n"
+    tcp_send(client.socket, command)
+    response = tcp_recv(client.socket, 1024)
+    success = (zeichenkette_finden(response, "STORED") != -1)
+    Wenn success then
+        Ausgeben "Memcached SET: " + key + " = " + value
+    Sonst
+        Ausgeben "Memcached SET失败"
+    Ende Wenn
+    gebe_zurueck success
+Ende Funktion
+Funktion memcached_get(client, key)
+    // Memcached GET命令
+    // 参数: client - 客户端, key - 键
+    // 返回值: 值
+    command = "get " + key + "\r\n"
+    tcp_send(client.socket, command)
+    response = tcp_recv(client.socket, 1024)
+    // 解析响应
+    parts = zeichenkette_teilen(response, "\r\n")
+    Wenn liste_laenge(parts) >= 2 then
+        value_line = liste_abrufen(parts, 1)
+        Ausgeben "Memcached GET: " + key + " -> " + value_line
+        gebe_zurueck value_line
+    Sonst
+        Ausgeben "Memcached GET失败"
+        gebe_zurueck null
+    Ende Wenn
+Ende Funktion
+```
+示例620：Kafka 协议 - 生产者
+```starc
+Funktion kafka_producer_connect(brokers, topic)
+    // Kafka生产者连接
+    // 参数: brokers - broker列表, topic - 主题
+    // 返回值: Kafka生产者
+    // 1. 连接第一个可用的broker
+    sock = null
+    i = 0
+    Solange i < liste_laenge(brokers) and sock == null
+        broker = liste_abrufen(brokers, i)
+        sock = tcp_connect(broker.host, broker.port)
+        i = i + 1
+    Ende Solange
+    Wenn sock == null then
+        Ausgeben "Kafka连接失败"
+        gebe_zurueck null
+    Ende Wenn
+    // 2. 发送API版本请求
+    kafka_send_api_versions(sock)
+    // 3. 创建生产者
+    producer = {
+        "socket": sock,
+        "topic": topic,
+        "brokers": brokers
+    }
+    Ausgeben "Kafka生产者连接成功，主题: " + topic
+    gebe_zurueck producer
+Ende Funktion
+Funktion kafka_produce(producer, key, value)
+    // Kafka发送消息
+    // 参数: producer - 生产者, key - 消息键, value - 消息值
+    // 返回值: 发送状态
+    // 1. 构建Produce请求
+    request = kafka_build_produce_request(producer.topic, key, value)
+    // 2. 发送请求
+    tcp_send(producer.socket, request)
+    // 3. 接收响应
+    response = tcp_recv(producer.socket, 4096)
+    // 4. 解析响应
+    status = kafka_parse_produce_response(response)
+    Wenn status.success then
+        Ausgeben "Kafka消息发送成功: " + key + " -> " + value
+        gebe_zurueck wahr
+    Sonst
+        Ausgeben "Kafka消息发送失败"
+        gebe_zurueck falsch
+    Ende Wenn
+Ende Funktion
+```
+示例621：Kafka 协议 - 消费者
+```starc
+Funktion kafka_consumer_connect(brokers, topic, group_id)
+    // Kafka消费者连接
+    // 参数: brokers - broker列表, topic - 主题, group_id - 消费者组ID
+    // 返回值: Kafka消费者
+    sock = null
+    i = 0
+    Solange i < liste_laenge(brokers) and sock == null
+        broker = liste_abrufen(brokers, i)
+        sock = tcp_connect(broker.host, broker.port)
+        i = i + 1
+    Ende Solange
+    Wenn sock == null then
+        Ausgeben "Kafka连接失败"
+        gebe_zurueck null
+    Ende Wenn
+    // 加入消费者组
+    kafka_join_group(sock, group_id, topic)
+    consumer = {
+        "socket": sock,
+        "topic": topic,
+        "group_id": group_id,
+        "partition": 0,
+        "offset": 0
+    }
+    Ausgeben "Kafka消费者连接成功，组: " + group_id + ", 主题: " + topic
+    gebe_zurueck consumer
+Ende Funktion
+Funktion kafka_consume(consumer, max_messages)
+    // Kafka消费消息
+    // 参数: consumer - 消费者, max_messages - 最大消息数
+    // 返回值: 消息列表
+    // 1. 构建Fetch请求
+    request = kafka_build_fetch_request(consumer.topic, consumer.partition, consumer.offset, max_messages)
+    // 2. 发送请求
+    tcp_send(consumer.socket, request)
+    // 3. 接收响应
+    response = tcp_recv(consumer.socket, 65535)
+    // 4. 解析消息
+    messages = kafka_parse_fetch_response(response)
+    // 5. 更新offset
+    Wenn liste_laenge(messages) > 0 then
+        last = liste_abrufen(messages, liste_laenge(messages) - 1)
+        consumer.offset = last.offset + 1
+    Ende Wenn
+    Ausgeben "Kafka消费完成，收到 " + liste_laenge(messages) + " 条消息"
+    gebe_zurueck messages
+Ende Funktion
+```
+示例622：ZooKeeper 客户端
+```starc
+Funktion zookeeper_connect(hosts, timeout)
+    // ZooKeeper客户端连接
+    // 参数: hosts - 主机列表, timeout - 超时时间(ms)
+    // 返回值: ZooKeeper客户端
+    // 1. 选择可用主机
+    sock = null
+    i = 0
+    Solange i < liste_laenge(hosts) and sock == null
+        host = liste_abrufen(hosts, i)
+        sock = tcp_connect(host, 2181)
+        i = i + 1
+    Ende Solange
+    Wenn sock == null then
+        Ausgeben "ZooKeeper连接失败"
+        gebe_zurueck null
+    Ende Wenn
+    // 2. 发送握手
+    zk_handshake(sock, timeout)
+    // 3. 创建客户端
+    client = {
+        "socket": sock,
+        "timeout": timeout,
+        "session_id": 0
+    }
+    Ausgeben "ZooKeeper连接成功"
+    gebe_zurueck client
+Ende Funktion
+Funktion zookeeper_create(client, path, data)
+    // ZooKeeper创建节点
+    // 参数: client - 客户端, path - 节点路径, data - 节点数据
+    // 返回值: 是否成功
+    request = zk_build_create_request(path, data)
+    tcp_send(client.socket, request)
+    response = tcp_recv(client.socket, 1024)
+    success = zk_parse_create_response(response)
+    Wenn success then
+        Ausgeben "ZooKeeper节点创建: " + path + " = " + data
+    Sonst
+        Ausgeben "ZooKeeper节点创建失败"
+    Ende Wenn
+    gebe_zurueck success
+Ende Funktion
+Funktion zookeeper_get(client, path)
+    // ZooKeeper读取节点
+    // 参数: client - 客户端, path - 节点路径
+    // 返回值: 节点数据
+    request = zk_build_get_request(path)
+    tcp_send(client.socket, request)
+    response = tcp_recv(client.socket, 1024)
+    data = zk_parse_get_response(response)
+    Ausgeben "ZooKeeper节点读取: " + path + " -> " + data
+    gebe_zurueck data
+Ende Funktion
+Funktion zookeeper_watch(client, path, callback)
+    // ZooKeeper Watch机制
+    // 参数: client - 客户端, path - 节点路径, callback - 回调函数
+    request = zk_build_watch_request(path)
+    tcp_send(client.socket, request)
+    // 异步等待watch通知
+    spawn_thread(zk_watch_loop, client.socket, path, callback)
+    Ausgeben "ZooKeeper Watch注册: " + path
+Ende Funktion
+```
+示例623：Nacos 服务注册
+```starc
+Funktion nacos_register(server, service_name, ip, port)
+    // Nacos服务注册
+    // 参数: server - Nacos服务器地址, service_name - 服务名
+    // ip - 服务IP, port - 服务端口
+    // 返回值: 是否成功
+    // 1. 构建注册请求
+    url = "http://" + server + "/nacos/v1/ns/instance"
+    params = "serviceName=" + service_name
+    params = params + "&ip=" + ip
+    params = params + "&port=" + port
+    params = params + "&ephemeral=true"
+    // 2. 发送POST请求
+    response = http_post(url, params)
+    // 3. 解析响应
+    Wenn zeichenkette_finden(response, "OK") != -1 then
+        Ausgeben "Nacos注册成功: " + service_name + " (" + ip + ":" + port + ")"
+        gebe_zurueck wahr
+    Sonst
+        Ausgeben "Nacos注册失败"
+        gebe_zurueck falsch
+    Ende Wenn
+Ende Funktion
+Funktion nacos_heartbeat(server, service_name, ip, port)
+    // Nacos心跳 (定时)
+    // 参数: server - Nacos服务器, service_name - 服务名
+    // ip - 服务IP, port - 服务端口
+    Solange wahr
+        system_schlafen(5000) // 每5秒
+        url = "http://" + server + "/nacos/v1/ns/instance/heartbeat"
+        params = "serviceName=" + service_name
+        params = params + "&ip=" + ip
+        params = params + "&port=" + port
+        http_put(url, params)
+        Ausgeben "Nacos心跳发送"
+    Ende Solange
+Ende Funktion
+```
+示例624：Consul 服务发现
+```starc
+Funktion consul_register(server, service_name, port)
+    // Consul服务注册
+    // 参数: server - Consul服务器, service_name - 服务名
+    // port - 服务端口
+    // 返回值: 服务ID
+    // 1. 构建注册请求
+    service_id = uuid_generate()
+    body = {
+        "ID": service_id,
+        "Name": service_name,
+        "Port": port,
+        "Check": {
+            "HTTP": "http://localhost:" + port + "/health",
+            "Interval": "10s"
+        }
+    }
+    json_body = json_encode(body)
+    // 2. 发送PUT请求
+    url = "http://" + server + "/v1/agent/service/register"
+    response = http_put(url, json_body)
+    Ausgeben "Consul注册成功: " + service_name + " (ID: " + service_id + ")"
+    gebe_zurueck service_id
+Ende Funktion
+Funktion consul_discover(server, service_name)
+    // Consul服务发现
+    // 参数: server - Consul服务器, service_name - 服务名
+    // 返回值: 服务实例列表
+    url = "http://" + server + "/v1/health/service/" + service_name
+    response = http_get(url)
+    instances = json_decode(response)
+    result = []
+    i = 0
+    Solange i < liste_laenge(instances)
+        inst = liste_abrufen(instances, i)
+        Wenn inst.CheckStatus == "passing" then
+            service = inst.Service
+            address = service.Address
+            port = service.Port
+            liste_einfuegen(result, {"address": address, "port": port})
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    Ausgeben "Consul发现: " + service_name + " 找到 " + liste_laenge(result) + " 个实例"
+    gebe_zurueck result
+Ende Funktion
+```
+示例625：Istio 服务网格集成
+```starc
+Funktion istio_proxy_init()
+    // Istio服务网格代理初始化
+    // 返回值: Istio代理对象
+    proxy = {
+        "listener": 15001, // 入站监听端口
+        "cluster": "local",
+        "envoy": envoy_client_init()
+    }
+    // 加载配置
+    proxy.config = istio_load_config("/etc/istio/config")
+    Ausgeben "Istio代理初始化完成"
+    gebe_zurueck proxy
+Ende Funktion
+Funktion istio_apply_traffic_policy(proxy, service, policy)
+    // Istio流量策略应用
+    // 参数: proxy - Istio代理, service - 目标服务
+    // policy - 策略 (负载均衡, 超时, 重试等)
+    // 配置负载均衡
+    Wenn policy.lb == "round_robin" then
+        istio_set_lb_round_robin(proxy, service)
+    Sonst Wenn policy.lb == "least_request" then
+        istio_set_lb_least_request(proxy, service)
+    Ende Wenn
+    // 配置超时
+    Wenn policy.timeout != null then
+        istio_set_timeout(proxy, service, policy.timeout)
+    Ende Wenn
+    // 配置重试
+    Wenn policy.retry != null then
+        istio_set_retry(proxy, service, policy.retry)
+    Ende Wenn
+    Ausgeben "Istio流量策略应用: " + service
+Ende Funktion
+```
+示例626：链路追踪（Jaeger）
+```starc
+Funktion jaeger_trace_start(service_name, operation)
+    // Jaeger追踪开始
+    // 参数: service_name - 服务名, operation - 操作名
+    // 返回值: 追踪上下文
+    trace_id = zufall_byte(16)
+    span_id = zufall_byte(8)
+    context = {
+        "trace_id": trace_id,
+        "span_id": span_id,
+        "parent_span_id": "",
+        "service_name": service_name,
+        "operation": operation,
+        "start_time": jetzt(),
+        "tags": {},
+        "logs": []
+    }
+    Ausgeben "Jaeger追踪开始: " + operation
+    gebe_zurueck context
+Ende Funktion
+Funktion jaeger_trace_end(context)
+    // Jaeger追踪结束
+    // 参数: context - 追踪上下文
+    context.end_time = jetzt()
+    context.duration = context.end_time - context.start_time
+    // 上报到Jaeger
+    jaeger_report(context)
+    Ausgeben "Jaeger追踪结束: " + context.operation + " (耗时: " + context.duration + "ms)"
+Ende Funktion
+Funktion jaeger_add_tag(context, key, value)
+    // 添加标签
+    context.tags[key] = value
+Ende Funktion
+Funktion jaeger_add_log(context, message)
+    // 添加日志
+    log = {
+        "timestamp": jetzt(),
+        "message": message
+    }
+    liste_einfuegen(context.logs, log)
+Ende Funktion
+```
+示例627：Prometheus 监控指标
+```starc
+Funktion prometheus_metrics_init()
+    // Prometheus监控指标初始化
+    // 返回值: Metrics注册表
+    registry = {
+        "counters": {},
+        "gauges": {},
+        "histograms": {},
+        "labels": {}
+    }
+    Ausgeben "Prometheus指标初始化完成"
+    gebe_zurueck registry
+Ende Funktion
+Funktion prometheus_counter_inc(registry, name, labels)
+    // 增加计数器
+    // 参数: registry - 指标注册表, name - 指标名
+    // labels - 标签
+    key = name + "{" + labels + "}"
+    Wenn registry.counters[key] == null then
+        registry.counters[key] = 0
+    Ende Wenn
+    registry.counters[key] = registry.counters[key] + 1
+Ende Funktion
+Funktion prometheus_gauge_set(registry, name, value, labels)
+    // 设置仪表盘
+    key = name + "{" + labels + "}"
+    registry.gauges[key] = value
+Ende Funktion
+Funktion prometheus_histogram_observe(registry, name, value, labels)
+    // 观察直方图
+    key = name + "{" + labels + "}"
+    Wenn registry.histograms[key] == null then
+        registry.histograms[key] = []
+    Ende Wenn
+    liste_einfuegen(registry.histograms[key], value)
+Ende Funktion
+Funktion prometheus_export(registry)
+    // 导出Prometheus格式指标
+    output = ""
+    // 输出计数器
+    keys = woerterbuch_schluessel(registry.counters)
+    i = 0
+    Solange i < liste_laenge(keys)
+        key = liste_abrufen(keys, i)
+        value = registry.counters[key]
+        output = output + key + " " + value + "\n"
+        i = i + 1
+    Ende Solange
+    // 输出仪表盘
+    keys = woerterbuch_schluessel(registry.gauges)
+    i = 0
+    Solange i < liste_laenge(keys)
+        key = liste_abrufen(keys, i)
+        value = registry.gauges[key]
+        output = output + key + " " + value + "\n"
+        i = i + 1
+    Ende Solange
+    Ausgeben "Prometheus指标导出完成"
+    gebe_zurueck output
+Ende Funktion
+```
+示例628：Grafana 数据源查询
+```starc
+Funktion grafana_query_datasource(datasource, query, time_range)
+    // Grafana数据源查询
+    // 参数: datasource - 数据源配置, query - 查询语句
+    // time_range - 时间范围 {from, to}
+    // 返回值: 查询结果
+    // 1. 构建Grafana查询请求
+    url = datasource.url + "/api/query"
+    body = {
+        "queries": [{
+            "refId": "A",
+            "query": query,
+            "timeRange": time_range
+        }]
+    }
+    json_body = json_encode(body)
+    // 2. 发送请求
+    response = http_post(url, json_body)
+    // 3. 解析结果
+    result = json_decode(response)
+    Ausgeben "Grafana查询完成: " + query
+    gebe_zurueck result
+Ende Funktion
+```
+示例629：日志聚合 - ELK Stack
+```starc
+Funktion elk_log_send(elasticsearch_host, index, log_entry)
+    // ELK日志发送 (到Elasticsearch)
+    // 参数: elasticsearch_host - ES主机, index - 索引名
+    // log_entry - 日志条目
+    // 1. 构建JSON
+    json_body = json_encode(log_entry)
+    // 2. 发送到Elasticsearch
+    url = "http://" + elasticsearch_host + "/" + index + "/_doc"
+    response = http_post(url, json_body)
+    Wenn zeichenkette_finden(response, "created") != -1 then
+        Ausgeben "ELK日志发送成功"
+    Sonst
+        Ausgeben "ELK日志发送失败"
+    Ende Wenn
+Ende Funktion
+Funktion elk_log_search(elasticsearch_host, in
+
+08.09 17:22
+starc语言示例库〈13〉〈续〉〈2〉
+---
+示例629：日志聚合 - ELK Stack
+```starc
+Funktion elk_log_send(elasticsearch_host, index, log_entry)
+    // ELK日志发送 (到Elasticsearch)
+    // 参数: elasticsearch_host - ES主机, index - 索引名
+    // log_entry - 日志条目
+    // 1. 构建JSON
+    json_body = json_encode(log_entry)
+    // 2. 发送到Elasticsearch
+    url = "http://" + elasticsearch_host + "/" + index + "/_doc"
+    response = http_post(url, json_body)
+    Wenn zeichenkette_finden(response, "created") != -1 then
+        Ausgeben "ELK日志发送成功"
+    Sonst
+        Ausgeben "ELK日志发送失败"
+    Ende Wenn
+Ende Funktion
+Funktion elk_log_search(elasticsearch_host, index, query)
+    // ELK日志搜索
+    // 参数: elasticsearch_host - ES主机, index - 索引名
+    // query - 查询DSL
+    url = "http://" + elasticsearch_host + "/" + index + "/_search"
+    response = http_post(url, query)
+    result = json_decode(response)
+    Ausgeben "ELK搜索完成，找到 " + result.hits.total + " 条"
+    gebe_zurueck result
+Ende Funktion
+```
+示例630：数据湖 - Delta Lake
+```starc
+Funktion delta_table_create(path, schema)
+    // Delta Lake表创建
+    // 参数: path - 表路径, schema - 表结构
+    // 返回值: Delta表对象
+    table = {
+        "path": path,
+        "schema": schema,
+        "version": 0,
+        "files": []
+    }
+    // 初始化事务日志
+    delta_init_log(path)
+    Ausgeben "Delta表创建: " + path
+    gebe_zurueck table
+Ende Funktion
+Funktion delta_table_merge(table, data, condition)
+    // Delta表合并 (UPSERT)
+    // 参数: table - Delta表, data - 数据列表
+    // condition - 匹配条件
+    // 1. 读取现有数据
+    existing = delta_read(table.path)
+    // 2. 合并
+    merged = []
+    i = 0
+    Solange i < liste_laenge(data)
+        record = liste_abrufen(data, i)
+        // 检查是否已存在
+        matched = falsch
+        j = 0
+        Solange j < liste_laenge(existing)
+            Wenn existing[j][condition.key] == record[condition.key] then
+                existing[j] = record
+                matched = wahr
+                j = liste_laenge(existing)
+            Ende Wenn
+            j = j + 1
+        Ende Solange
+        Wenn not matched then
+            liste_einfuegen(existing, record)
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    // 3. 写入新版本
+    delta_write(table.path, existing, table.version + 1)
+    table.version = table.version + 1
+    Ausgeben "Delta表合并完成，版本: " + table.version
+Ende Funktion
+Funktion delta_table_time_travel(table, timestamp)
+    // Delta表时间旅行
+    // 参数: table - Delta表, timestamp - 时间戳
+    // 返回值: 该时间点的数据
+    // 找到该时间点之前的最大版本
+    version = delta_find_version_at(table.path, timestamp)
+    data = delta_read_version(table.path, version)
+    Ausgeben "Delta时间旅行: 版本 " + version + " @ " + timestamp
+    gebe_zurueck data
+Ende Funktion
+```
+示例631：GraphQL 服务端
+```starc
+Funktion graphql_server_init(schema, resolvers)
+    // GraphQL服务器初始化
+    // 参数: schema - GraphQL模式, resolvers - 解析函数
+    // 返回值: GraphQL服务器
+    server = {
+        "schema": schema,
+        "resolvers": resolvers,
+        "middleware": []
+    }
+    Ausgeben "GraphQL服务器初始化完成"
+    gebe_zurueck server
+Ende Funktion
+Funktion graphql_execute(server, query, variables)
+    // 执行GraphQL查询
+    // 参数: server - GraphQL服务器, query - 查询字符串
+    // variables - 变量
+    // 返回值: 执行结果
+    // 1. 解析查询
+    ast = graphql_parse(query)
+    // 2. 验证
+    validation = graphql_validate(server.schema, ast)
+    Wenn validation.errors != null then
+        Ausgeben "GraphQL验证失败"
+        gebe_zurueck {"errors": validation.errors}
+    Ende Wenn
+    // 3. 执行
+    result = graphql_execute_ast(server.schema, server.resolvers, ast, variables)
+    Ausgeben "GraphQL执行完成"
+    gebe_zurueck result
+Ende Funktion
+```
+示例632：gRPC 流式通信
+```starc
+Funktion grpc_server_stream(server, method, request)
+    // gRPC服务端流式响应
+    // 参数: server - gRPC服务器, method - 方法名
+    // request - 请求消息
+    // 返回值: 响应流
+    // 1. 构建响应流
+    stream = {
+        "method": method,
+        "request": request,
+        "responses": [],
+        "closed": falsch
+    }
+    // 2. 启动流式处理
+    spawn_thread(grpc_stream_handler, stream)
+    Ausgeben "gRPC流式响应启动: " + method
+    gebe_zurueck stream
+Ende Funktion
+Funktion grpc_client_stream(client, method, requests)
+    // gRPC客户端流式请求
+    // 参数: client - gRPC客户端, method - 方法名
+    // requests - 请求流
+    // 返回值: 响应
+    // 1. 建立流式连接
+    stream = grpc_open_stream(client, method)
+    // 2. 发送所有请求
+    i = 0
+    Solange i < liste_laenge(requests)
+        request = liste_abrufen(requests, i)
+        grpc_send_stream(stream, request)
+        i = i + 1
+    Ende Solange
+    // 3. 关闭发送端
+    grpc_close_stream_send(stream)
+    // 4. 接收响应
+    response = grpc_recv_stream(stream)
+    Ausgeben "gRPC流式请求完成，发送 " + liste_laenge(requests) + " 条"
+    gebe_zurueck response
+Ende Funktion
+```
+示例633：消息队列 - RabbitMQ
+```starc
+Funktion rabbitmq_connect(host, port, vhost, username, password)
+    // RabbitMQ连接 (AMQP)
+    // 参数: host - 主机, port - 端口, vhost - 虚拟主机
+    // username - 用户名, password - 密码
+    // 返回值: RabbitMQ连接
+    sock = tcp_connect(host, port)
+    // AMQP握手
+    amqp_handshake(sock, vhost, username, password)
+    connection = {
+        "socket": sock,
+        "vhost": vhost,
+        "channels": {}
+    }
+    Ausgeben "RabbitMQ连接成功: " + host + ":" + port
+    gebe_zurueck connection
+Ende Funktion
+Funktion rabbitmq_publish(connection, exchange, routing_key, message)
+    // RabbitMQ发布消息
+    // 参数: connection - 连接, exchange - 交换机
+    // routing_key - 路由键, message - 消息
+    // 1. 打开通道
+    channel = amqp_open_channel(connection.socket)
+    // 2. 声明交换机
+    amqp_exchange_declare(channel, exchange)
+    // 3. 发布消息
+    amqp_basic_publish(channel, exchange, routing_key, message)
+    // 4. 关闭通道
+    amqp_close_channel(channel)
+    Ausgeben "RabbitMQ发布: " + routing_key + " -> " + message
+Ende Funktion
+Funktion rabbitmq_consume(connection, queue, callback)
+    // RabbitMQ消费消息
+    // 参数: connection - 连接, queue - 队列名, callback - 回调函数
+    channel = amqp_open_channel(connection.socket)
+    // 声明队列
+    amqp_queue_declare(channel, queue)
+    // 绑定
+    amqp_queue_bind(channel, queue, "amq.direct", queue)
+    // 消费
+    amqp_basic_consume(channel, queue, callback)
+    Ausgeben "RabbitMQ消费开始: " + queue
+    // 进入消费循环
+    Solange wahr
+        amqp_consume_loop(channel)
+    Ende Solange
+Ende Funktion
+```
+示例634：Pulsar 消息系统
+```starc
+Funktion pulsar_client_init(service_url, tenant, namespace)
+    // Pulsar客户端初始化
+    // 参数: service_url - 服务URL, tenant - 租户
+    // namespace - 命名空间
+    // 返回值: Pulsar客户端
+    client = {
+        "url": service_url,
+        "tenant": tenant,
+        "namespace": namespace,
+        "producers": {},
+        "consumers": {}
+    }
+    // 建立连接
+    client.socket = pulsar_connect(service_url)
+    Ausgeben "Pulsar客户端初始化完成"
+    gebe_zurueck client
+Ende Funktion
+Funktion pulsar_create_producer(client, topic)
+    // 创建Pulsar生产者
+    // 参数: client - 客户端, topic - 主题
+    // 返回值: 生产者
+    full_topic = "persistent://" + client.tenant + "/" + client.namespace + "/" + topic
+    producer = {
+        "topic": full_topic,
+        "client": client,
+        "sequence": 0
+    }
+    // 发送producer创建请求
+    pulsar_send_producer_request(client.socket, full_topic)
+    Ausgeben "Pulsar生产者创建: " + topic
+    gebe_zurueck producer
+Ende Funktion
+```
+示例635：自定义二进制协议解析
+```starc
+Funktion binary_protocol_parse(data, spec)
+    // 自定义二进制协议解析
+    // 参数: data - 原始数据, spec - 协议规范
+    // [{name, type, length, byte_order}]
+    // 返回值: 解析后的字段字典
+    pos = 0
+    result = {}
+    i = 0
+    Solange i < liste_laenge(spec)
+        field = liste_abrufen(spec, i)
+        name = field.name
+        typ = field.type
+        length = field.length
+        byte_order = field.byte_order
+        // 根据类型解析
+        Wenn typ == "uint8" then
+            value = bytes_to_uint(data[pos:pos+1])
+            pos = pos + 1
+        Sonst Wenn typ == "uint16" then
+            value = bytes_to_uint16(data[pos:pos+2], byte_order)
+            pos = pos + 2
+        Sonst Wenn typ == "uint32" then
+            value = bytes_to_uint32(data[pos:pos+4], byte_order)
+            pos = pos + 4
+        Sonst Wenn typ == "uint64" then
+            value = bytes_to_uint64(data[pos:pos+8], byte_order)
+            pos = pos + 8
+        Sonst Wenn typ == "string" then
+            value = data[pos:pos+length]
+            pos = pos + length
+        Sonst Wenn typ == "bytes" then
+            len = bytes_to_uint(data[pos:pos+length])
+            pos = pos + length
+            value = data[pos:pos+len]
+            pos = pos + len
+        Ende Wenn
+        result[name] = value
+        i = i + 1
+    Ende Solange
+    Ausgeben "二进制协议解析完成，解析 " + liste_laenge(spec) + " 个字段"
+    gebe_zurueck result
+Ende Funktion
+Funktion binary_protocol_build(fields, spec)
+    // 构建二进制协议
+    // 参数: fields - 字段值字典, spec - 协议规范
+    // 返回值: 二进制数据
+    data = ""
+    i = 0
+    Solange i < liste_laenge(spec)
+        field = liste_abrufen(spec, i)
+        name = field.name
+        typ = field.type
+        value = fields[name]
+        Wenn typ == "uint8" then
+            data = data + uint8_to_bytes(value)
+        Sonst Wenn typ == "uint16" then
+            data = data + uint16_to_bytes(value, field.byte_order)
+        Sonst Wenn typ == "uint32" then
+            data = data + uint32_to_bytes(value, field.byte_order)
+        Sonst Wenn typ == "string" then
+            data = data + value
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    Ausgeben "二进制协议构建完成，长度: " + zeichenkette_laenge(data)
+    gebe_zurueck data
+Ende Funktion
+```
+---
+---
+示例636：状态机实现
+```starc
+Funktion state_machine_create(initial_state, transitions)
+    // 状态机创建
+    // 参数: initial_state - 初始状态
+    // transitions - 状态转换表 [{from, event, to, action}]
+    // 返回值: 状态机对象
+    machine = {
+        "current": initial_state,
+        "transitions": transitions,
+        "history": [],
+        "listeners": []
+    }
+    Ausgeben "状态机创建完成，初始状态: " + initial_state
+    gebe_zurueck machine
+Ende Funktion
+Funktion state_machine_fire(machine, event)
+    // 触发事件
+    // 参数: machine - 状态机, event - 事件
+    // 返回值: 是否转换成功
+    // 1. 查找匹配的转换
+    matched = null
+    i = 0
+    Solange i < liste_laenge(machine.transitions)
+        trans = liste_abrufen(machine.transitions, i)
+        Wenn trans.from == machine.current and trans.event == event then
+            matched = trans
+            i = liste_laenge(machine.transitions)
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    Wenn matched == null then
+        Ausgeben "状态机: 事件 " + event + " 在当前状态 " + machine.current + " 无效"
+        gebe_zurueck falsch
+    Ende Wenn
+    // 2. 记录历史
+    machine.history = [machine.current, event]
+    // 3. 执行动作
+    Wenn matched.action != null then
+        matched.action()
+    Ende Wenn
+    // 4. 切换状态
+    machine.current = matched.to
+    // 5. 通知监听器
+    notify_state_change(machine.listeners, machine.current, event)
+    Ausgeben "状态机: " + matched.from + " --" + event + "--> " + matched.to
+    gebe_zurueck wahr
+Ende Funktion
+```
+示例637：规则引擎
+```starc
+Funktion rule_engine_create(rules)
+    // 规则引擎创建
+    // 参数: rules - 规则列表 [{condition, action, priority}]
+    // 返回值: 规则引擎对象
+    engine = {
+        "rules": rules,
+        "facts": {}
+    }
+    // 按优先级排序
+    engine.rules = sort_by_priority(engine.rules)
+    Ausgeben "规则引擎创建完成，共 " + liste_laenge(rules) + " 条规则"
+    gebe_zurueck engine
+Ende Funktion
+Funktion rule_engine_add_fact(engine, key, value)
+    // 添加事实
+    // 参数: engine - 规则引擎, key - 事实键, value - 事实值
+    engine.facts[key] = value
+    Ausgeben "规则引擎添加事实: " + key + " = " + value
+Ende Funktion
+Funktion rule_engine_execute(engine)
+    // 执行规则引擎
+    // 参数: engine - 规则引擎
+    // 返回值: 执行结果
+    executed = 0
+    i = 0
+    Solange i < liste_laenge(engine.rules)
+        rule = liste_abrufen(engine.rules, i)
+        // 评估条件
+        condition_result = evaluate_condition(rule.condition, engine.facts)
+        Wenn condition_result then
+            // 执行动作
+            result = rule.action(engine.facts)
+            Ausgeben "规则执行: " + rule.name + " -> " + result
+            executed = executed + 1
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    Ausgeben "规则引擎执行完成，执行 " + executed + " 条规则"
+    gebe_zurueck executed
+Ende Funktion
+```
+示例638：工作流引擎
+```starc
+Funktion workflow_create(name, steps)
+    // 工作流创建
+    // 参数: name - 工作流名称, steps - 步骤列表
+    // [{id, action, next, on_error}]
+    // 返回值: 工作流对象
+    workflow = {
+        "name": name,
+        "steps": steps,
+        "status": "idle",
+        "current_step": 0,
+        "context": {},
+        "executed": []
+    }
+    Ausgeben "工作流创建: " + name + " ( " + liste_laenge(steps) + " 步)"
+    gebe_zurueck workflow
+Ende Funktion
+Funktion workflow_execute(workflow, input)
+    // 执行工作流
+    // 参数: workflow - 工作流, input - 输入数据
+    // 返回值: 执行结果
+    workflow.status = "running"
+    workflow.context = input
+    step_idx = 0
+    Solange step_idx < liste_laenge(workflow.steps)
+        workflow.current_step = step_idx
+        step = liste_abrufen(workflow.steps, step_idx)
+        Ausgeben "执行工作流步骤: " + step.id
+        // 执行步骤
+        try
+            result = step.action(workflow.context)
+            workflow.context = result
+            liste_einfuegen(workflow.executed, {"step": step.id, "result": result, "status": "success"})
+            // 跳转到下一步
+            step_idx = step_idx + 1
+            // 如果有自定义跳转
+            Wenn step.next != null then
+                step_idx = step.next
+            Ende Wenn
+        catch (error)
+            // 错误处理
+            Ausgeben "工作流步骤失败: " + step.id + " - " + error
+            Wenn step.on_error != null then
+                step_idx = step.on_error
+            Sonst
+                workflow.status = "failed"
+                gebe_zurueck {"status": "failed", "step": step.id, "error": error}
+            Ende Wenn
+        Ende Versuch
+    Ende Solange
+    workflow.status = "completed"
+    Ausgeben "工作流执行完成"
+    gebe_zurueck {"status": "completed", "result": workflow.context}
+Ende Funktion
+```
+示例639：调度器（Task Scheduler）
+```starc
+Funktion task_scheduler_init()
+    // 任务调度器初始化
+    // 返回值: 调度器对象
+    scheduler = {
+        "tasks": {},
+        "running": {},
+        "queue": [],
+        "max_workers": 10,
+        "active_workers": 0
+    }
+    // 启动调度循环
+    spawn_thread(scheduler_loop, scheduler)
+    Ausgeben "任务调度器初始化完成"
+    gebe_zurueck scheduler
+Ende Funktion
+Funktion scheduler_add_task(scheduler, task, schedule)
+    // 添加定时任务
+    // 参数: scheduler - 调度器, task - 任务函数
+    // schedule - 调度表达式 (cron或interval)
+    task_id = uuid_generate()
+    entry = {
+        "id": task_id,
+        "task": task,
+        "schedule": schedule,
+        "next_run": scheduler_calc_next(schedule),
+        "last_run": 0,
+        "run_count": 0
+    }
+    scheduler.tasks[task_id] = entry
+    liste_einfuegen(scheduler.queue, entry)
+    Ausgeben "调度任务添加: " + task_id + " ( " + schedule + " )"
+    gebe_zurueck task_id
+Ende Funktion
+Funktion scheduler_run_tasks(scheduler)
+    // 调度器主循环
+    // 参数: scheduler - 调度器
+    Solange wahr
+        jetzt_time = jetzt()
+        i = 0
+        Solange i < liste_laenge(scheduler.queue)
+            entry = liste_abrufen(scheduler.queue, i)
+            Wenn jetzt_time >= entry.next_run then
+                // 执行任务
+                Wenn scheduler.active_workers < scheduler.max_workers then
+                    scheduler.active_workers = scheduler.active_workers + 1
+                    spawn_thread(scheduler_execute_task, scheduler, entry)
+                    entry.run_count = entry.run_count + 1
+                    entry.next_run = scheduler_calc_next(entry.schedule)
+                Ende Wenn
+            Ende Wenn
+            i = i + 1
+        Ende Solange
+        system_schlafen(1000) // 每秒检查一次
+    Ende Solange
+Ende Funktion
+```
+示例640：协程实现
+```starc
+Funktion coroutine_create(generator)
+    // 创建协程
+    // 参数: generator - 生成器函数
+    // 返回值: 协程对象
+    coro = {
+        "generator": generator,
+        "state": "suspended",
+        "value": null,
+        "stack": []
+    }
+    Ausgeben "协程创建完成"
+    gebe_zurueck coro
+Ende Funktion
+Funktion coroutine_resume(coro, value)
+    // 恢复协程
+    // 参数: coro - 协程对象, value - 传入值
+    // 返回值: 协程返回值
+    Wenn coro.state == "dead" then
+        Ausgeben "协程已结束"
+        gebe_zurueck null
+    Ende Wenn
+    coro.state = "running"
+    result = coro.generator(value)
+    coro.value = result
+    // 检查是否结束
+    Wenn coro.generator.is_completed then
+        coro.state = "dead"
+        Ausgeben "协程执行完成"
+    Sonst
+        coro.state = "suspended"
+        Ausgeben "协程挂起"
+    Ende Wenn
+    gebe_zurueck result
+Ende Funktion
+```
+示例641：Actor 模型
+```starc
+Funktion actor_system_init()
+    // Actor系统初始化
+    // 返回值: Actor系统
+    system = {
+        "actors": {},
+        "mailboxes": {},
+        "scheduler": task_scheduler_init()
+    }
+    Ausgeben "Actor系统初始化完成"
+    gebe_zurueck system
+Ende Funktion
+Funktion actor_create(system, name, behavior)
+    // 创建Actor
+    // 参数: system - Actor系统, name - Actor名称
+    // behavior - 行为函数 (接收消息)
+    actor = {
+        "id": name,
+        "behavior": behavior,
+        "state": {},
+        "mailbox": []
+    }
+    system.actors[name] = actor
+    system.mailboxes[name] = []
+    Ausgeben "Actor创建: " + name
+    gebe_zurueck actor
+Ende Funktion
+Funktion actor_send(system, to, message)
+    // 发送消息
+    // 参数: system - Actor系统, to - 目标Actor
+    // message - 消息
+    mailbox = system.mailboxes[to]
+    Wenn mailbox == null then
+        Ausgeben "Actor不存在: " + to
+        gebe_zurueck
+    Ende Wenn
+    liste_einfuegen(mailbox, message)
+    // 触发调度处理
+    scheduler_add_task(system.scheduler, function() {
+        actor_process_messages(system, to)
+    }, "immediate")
+    Ausgeben "Actor消息发送: " + to + " <- " + message
+Ende Funktion
+Funktion actor_process_messages(system, actor_id)
+    // 处理Actor消息
+    // 参数: system - Actor系统, actor_id - Actor ID
+    actor = system.actors[actor_id]
+    mailbox = system.mailboxes[actor_id]
+    Solange liste_laenge(mailbox) > 0
+        message = liste_abrufen(mailbox, 0)
+        liste_entfernen(mailbox, 0)
+        // 执行行为
+        actor.behavior(message, actor.state)
+    Ende Solange
+Ende Funktion
+```
+示例642：事件溯源（Event Sourcing）
+```starc
+Funktion event_store_init()
+    // 事件存储初始化
+    // 返回值: 事件存储
+    store = {
+        "events": [],
+        "snapshots": {},
+        "version": 0
+    }
+    Ausgeben "事件存储初始化完成"
+    gebe_zurueck store
+Ende Funktion
+Funktion event_store_append(store, aggregate_id, event_type, event_data)
+    // 追加事件
+    // 参数: store - 事件存储, aggregate_id - 聚合ID
+    // event_type - 事件类型, event_data - 事件数据
+    event = {
+        "id": uuid_generate(),
+        "aggregate_id": aggregate_id,
+        "type": event_type,
+        "data": event_data,
+        "version": store.version + 1,
+        "timestamp": jetzt()
+    }
+    liste_einfuegen(store.events, event)
+    store.version = store.version + 1
+    Ausgeben "事件追加: " + event_type + " (版本: " + store.version + ")"
+    gebe_zurueck event
+Ende Funktion
+Funktion event_store_replay(store, aggregate_id)
+    // 重放事件
+    // 参数: store - 事件存储, aggregate_id - 聚合ID
+    // 返回值: 重建的状态
+    state = {}
+    i = 0
+    Solange i < liste_laenge(store.events)
+        event = liste_abrufen(store.events, i)
+        Wenn event.aggregate_id == aggregate_id then
+            // 应用事件
+            state = apply_event(state, event)
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    Ausgeben "事件重放完成，聚合: " + aggregate_id
+    gebe_zurueck state
+Ende Funktion
+```
+示例643：CQRS 模式
+```starc
+Funktion cqrs_router_init()
+    // CQRS路由器初始化
+    // 返回值: CQRS路由器
+    router = {
+        "command_handlers": {},
+        "query_handlers": {},
+        "event_bus": event_bus_create()
+    }
+    Ausgeben "CQRS路由器初始化完成"
+    gebe_zurueck router
+Ende Funktion
+Funktion cqrs_register_command(router, command_type, handler)
+    // 注册命令处理器
+    // 参数: router - CQRS路由器, command_type - 命令类型
+    // handler - 处理器函数
+    router.command_handlers[command_type] = handler
+    Ausgeben "命令处理器注册: " + command_type
+Ende Funktion
+Funktion cqrs_register_query(router, query_type, handler)
+    // 注册查询处理器
+    router.query_handlers[query_type] = handler
+    Ausgeben "查询处理器注册: " + query_type
+Ende Funktion
+Funktion cqrs_dispatch_command(router, command)
+    // 分发命令 (写操作)
+    // 参数: router - CQRS路由器, command - 命令对象
+    // 返回值: 执行结果
+    handler = router.command_handlers[command.type]
+    Wenn handler == null then
+        Ausgeben "命令处理器未找到: " + command.type
+        gebe_zurueck null
+    Ende Wenn
+    result = handler(command)
+    // 发布事件
+    router.event_bus.publish(command.type + "_executed", result)
+    Ausgeben "命令执行: " + command.type
+    gebe_zurueck result
+Ende Funktion
+Funktion cqrs_dispatch_query(router, query)
+    // 分发查询 (读操作)
+    // 参数: router - CQRS路由器, query - 查询对象
+    // 返回值: 查询结果
+    handler = router.query_handlers[query.type]
+    Wenn handler == null then
+        Ausgeben "查询处理器未找到: " + query.type
+        gebe_zurueck null
+    Ende Wenn
+    result = handler(query)
+    Ausgeben "查询执行: " + query.type
+    gebe_zurueck result
+Ende Funktion
+```
+示例644：API 版本管理
+```starc
+Funktion api_version_manager_init()
+    // API版本管理器
+    // 返回值: 版本管理器
+    manager = {
+        "versions": {},
+        "current": "v1",
+        "deprecated": []
+    }
+    Ausgeben "API版本管理器初始化完成"
+    gebe_zurueck manager
+Ende Funktion
+Funktion api_register_version(manager, version, router)
+    // 注册API版本
+    // 参数: manager - 版本管理器, version - 版本号
+    // router - 路由配置
+    manager.versions[version] = router
+    Ausgeben "API版本注册: " + version
+Ende Funktion
+Funktion api_route_request(manager, request)
+    // 路由API请求
+    // 参数: manager - 版本管理器, request - 请求
+    // 返回值: 响应
+    // 1. 从请求头提取版本
+    version = request.headers["API-Version"]
+    Wenn version == "" then
+        version = manager.current
+    Ende Wenn
+    // 2. 检查版本是否存在
+    router = manager.versions[version]
+    Wenn router == null then
+        // 尝试降级
+        version = manager.current
+        router = manager.versions[version]
+        Wenn router == null then
+            Ausgeben "API版本不存在: " + version
+            gebe_zurueck {"status": 400, "error": "Invalid API version"}
+        Ende Wenn
+    Ende Wenn
+    // 3. 检查是否已废弃
+    Wenn liste_enthaltet(manager.deprecated, version) then
+        response.headers["Deprecation"] = "true"
+        response.headers["Sunset"] = "2025-01-01"
+    Ende Wenn
+    // 4. 路由到对应版本
+    response = router.route(request)
+    Ausgeben "API请求路由: 版本 " + version
+    gebe_zurueck response
+Ende Funktion
+```
+示例645：熔断器（Circuit Breaker）
+```starc
+Funktion circuit_breaker_create(name, failure_threshold, timeout)
+    // 熔断器创建
+    // 参数: name - 名称, failure_threshold - 失败阈值
+    // timeout - 超时时间(ms)
+    // 返回值: 熔断器
+    cb = {
+        "name": name,
+        "state": "closed", // closed, open, half_open
+        "failure_count": 0,
+        "success_count": 0,
+        "failure_threshold": failure_threshold,
+        "timeout": timeout,
+        "last_failure": 0,
+        "next_try": 0
+    }
+    Ausgeben "熔断器创建: " + name
+    gebe_zurueck cb
+Ende Funktion
+Funktion circuit_breaker_call(cb, fn)
+    // 熔断器调用
+    // 参数: cb - 熔断器, fn - 被保护的函数
+    // 返回值: 调用结果
+    // 1. 检查熔断器状态
+    Wenn cb.state == "open" then
+        Wenn jetzt() >= cb.next_try then
+            cb.state = "half_open"
+            Ausgeben "熔断器 " + cb.name + " 进入半开状态"
+        Sonst
+            Ausgeben "熔断器 " + cb.name + " 打开，请求被拒绝"
+            gebe_zurueck {"error": "Circuit breaker open", "fallback": cb.fallback}
+        Ende Wenn
+    Ende Wenn
+    // 2. 执行被保护函数
+    try
+        result = fn()
+        // 成功
+        Wenn cb.state == "half_open" then
+            cb.state = "closed"
+            cb.failure_count = 0
+            Ausgeben "熔断器 " + cb.name + " 恢复关闭状态"
+        Ende Wenn
+        cb.success_count = cb.success_count + 1
+        gebe_zurueck {"success": wahr, "result": result}
+    catch (error)
+        // 失败
+        cb.failure_count = cb.failure_count + 1
+        cb.last_failure = jetzt()
+        Wenn cb.failure_count >= cb.failure_threshold then
+            cb.state = "open"
+            cb.next_try = jetzt() + cb.timeout
+            Ausgeben "熔断器 " + cb.name + " 触发打开状态"
+        Ende Wenn
+        gebe_zurueck {"success": falsch, "error": error}
+    Ende Versuch
+Ende Funktion
+```
+---
+
+08.09 17:24
+starc语言示例库〈13〉〈续〉〈3〉
+---
+示例646：重试机制
+```starc
+Funktion retry_execute(fn, max_retries, delay, backoff)
+    // 重试执行
+    // 参数: fn - 被执行的函数, max_retries - 最大重试次数
+    // delay - 初始延迟(ms), backoff - 退避因子
+    // 返回值: 执行结果
+    retries = 0
+    current_delay = delay
+    Solange retries <= max_retries
+        try
+            result = fn()
+            Ausgeben "执行成功 (重试: " + retries + ")"
+            gebe_zurueck {"success": wahr, "result": result, "retries": retries}
+        catch (error)
+            retries = retries + 1
+            Wenn retries <= max_retries then
+                Ausgeben "执行失败，重试 " + retries + "/" + max_retries + " (延迟: " + current_delay + "ms)"
+                system_schlafen(current_delay)
+                current_delay = current_delay * backoff
+            Sonst
+                Ausgeben "执行失败，已达最大重试次数"
+                gebe_zurueck {"success": falsch, "error": error, "retries": retries}
+            Ende Wenn
+        Ende Versuch
+    Ende Solange
+Ende Funktion
+```
+示例647：批量处理器
+```starc
+Funktion batch_processor_create(batch_size, flush_interval, processor)
+    // 批量处理器创建
+    // 参数: batch_size - 批量大小, flush_interval - 刷新间隔(秒)
+    // processor - 批处理函数
+    // 返回值: 批量处理器
+    bp = {
+        "buffer": [],
+        "batch_size": batch_size,
+        "flush_interval": flush_interval,
+        "processor": processor,
+        "last_flush": jetzt(),
+        "stats": {"processed": 0, "batches": 0}
+    }
+    // 启动定时刷新
+    spawn_thread(batch_flush_loop, bp)
+    Ausgeben "批量处理器创建完成"
+    gebe_zurueck bp
+Ende Funktion
+Funktion batch_add(bp, item)
+    // 添加项到批量
+    // 参数: bp - 批量处理器, item - 数据项
+    liste_einfuegen(bp.buffer, item)
+    Wenn liste_laenge(bp.buffer) >= bp.batch_size then
+        batch_process(bp)
+    Ende Wenn
+Ende Funktion
+Funktion batch_process(bp)
+    // 处理批量
+    // 参数: bp - 批量处理器
+    Wenn liste_laenge(bp.buffer) == 0 then
+        gebe_zurueck
+    Ende Wenn
+    batch = bp.buffer
+    bp.buffer = []
+    result = bp.processor(batch)
+    bp.stats.processed = bp.stats.processed + liste_laenge(batch)
+    bp.stats.batches = bp.stats.batches + 1
+    Ausgeben "批量处理完成，处理 " + liste_laenge(batch) + " 条 (总数: " + bp.stats.processed + ")"
+    gebe_zurueck result
+Ende Funktion
+```
+示例648：连接池
+```starc
+Funktion connection_pool_create(factory, max_size, idle_timeout)
+    // 连接池创建
+    // 参数: factory - 连接工厂函数, max_size - 最大连接数
+    // idle_timeout - 空闲超时(秒)
+    // 返回值: 连接池
+    pool = {
+        "factory": factory,
+        "connections": [],
+        "max_size": max_size,
+        "idle_timeout": idle_timeout,
+        "stats": {"total": 0, "active": 0, "idle": 0}
+    }
+    // 初始化最小连接 (预热)
+    i = 0
+    Solange i < 5 and i < max_size
+        conn = factory()
+        liste_einfuegen(pool.connections, {"conn": conn, "last_used": jetzt(), "idle": wahr})
+        pool.stats.total = pool.stats.total + 1
+        pool.stats.idle = pool.stats.idle + 1
+        i = i + 1
+    Ende Solange
+    Ausgeben "连接池创建完成，预连接: " + i + " 个"
+    gebe_zurueck pool
+Ende Funktion
+Funktion connection_pool_acquire(pool)
+    // 获取连接
+    // 参数: pool - 连接池
+    // 返回值: 连接
+    // 1. 查找空闲连接
+    i = 0
+    Solange i < liste_laenge(pool.connections)
+        entry = liste_abrufen(pool.connections, i)
+        Wenn entry.idle then
+            // 检查是否超时
+            Wenn jetzt() - entry.last_used > pool.idle_timeout then
+                // 关闭并移除
+                entry.conn.close()
+                liste_entfernen(pool.connections, i)
+                pool.stats.total = pool.stats.total - 1
+                i = i - 1
+            Sonst
+                entry.idle = falsch
+                entry.last_used = jetzt()
+                pool.stats.idle = pool.stats.idle - 1
+                pool.stats.active = pool.stats.active + 1
+                Ausgeben "连接池: 获取连接"
+                gebe_zurueck entry.conn
+            Ende Wenn
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    // 2. 如果没有可用连接且未达到上限，创建新连接
+    Wenn pool.stats.total < pool.max_size then
+        conn = pool.factory()
+        liste_einfuegen(pool.connections, {"conn": conn, "last_used": jetzt(), "idle": falsch})
+        pool.stats.total = pool.stats.total + 1
+        pool.stats.active = pool.stats.active + 1
+        Ausgeben "连接池: 创建新连接 (" + pool.stats.total + "/" + pool.max_size + ")"
+        gebe_zurueck conn
+    Ende Wenn
+    // 3. 等待连接
+    Ausgeben "连接池: 等待连接"
+    system_schlafen(1000)
+    gebe_zurueck connection_pool_acquire(pool)
+Ende Funktion
+Funktion connection_pool_release(pool, conn)
+    // 释放连接
+    // 参数: pool - 连接池, conn - 连接
+    i = 0
+    Solange i < liste_laenge(pool.connections)
+        entry = liste_abrufen(pool.connections, i)
+        Wenn entry.conn == conn then
+            entry.idle = wahr
+            entry.last_used = jetzt()
+            pool.stats.active = pool.stats.active - 1
+            pool.stats.idle = pool.stats.idle + 1
+            Ausgeben "连接池: 释放连接"
+            gebe_zurueck
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+Ende Funktion
+```
+示例649：缓存策略 - LRU
+```starc
+Funktion lru_cache_create(max_size)
+    // LRU缓存创建
+    // 参数: max_size - 最大条目数
+    // 返回值: LRU缓存
+    cache = {
+        "data": {},
+        "order": [],
+        "max_size": max_size,
+        "hits": 0,
+        "misses": 0
+    }
+    Ausgeben "LRU缓存创建，最大容量: " + max_size
+    gebe_zurueck cache
+Ende Funktion
+Funktion lru_cache_get(cache, key)
+    // LRU缓存获取
+    // 参数: cache - LRU缓存, key - 键
+    // 返回值: 值 或 null
+    Wenn cache.data[key] != null then
+        // 移动到最新
+        liste_entfernen(cache.order, key)
+        liste_einfuegen(cache.order, key)
+        cache.hits = cache.hits + 1
+        Ausgeben "LRU缓存命中: " + key
+        gebe_zurueck cache.data[key]
+    Ende Wenn
+    cache.misses = cache.misses + 1
+    Ausgeben "LRU缓存未命中: " + key
+    gebe_zurueck null
+Ende Funktion
+Funktion lru_cache_set(cache, key, value)
+    // LRU缓存设置
+    // 参数: cache - LRU缓存, key - 键, value - 值
+    Wenn cache.data[key] != null then
+        // 更新现有
+        cache.data[key] = value
+        liste_entfernen(cache.order, key)
+        liste_einfuegen(cache.order, key)
+    Sonst
+        // 检查容量
+        Wenn liste_laenge(cache.order) >= cache.max_size then
+            // 淘汰最久未使用
+            oldest = liste_abrufen(cache.order, 0)
+            liste_entfernen(cache.order, 0)
+            cache.data[oldest] = null
+            Ausgeben "LRU缓存淘汰: " + oldest
+        Ende Wenn
+        cache.data[key] = value
+        liste_einfuegen(cache.order, key)
+    Ende Wenn
+    Ausgeben "LRU缓存设置: " + key + " = " + value
+Ende Funktion
+```
+示例650：缓存策略 - LFU
+```starc
+Funktion lfu_cache_create(max_size)
+    // LFU缓存创建 (最少使用)
+    // 参数: max_size - 最大条目数
+    // 返回值: LFU缓存
+    cache = {
+        "data": {},
+        "freq": {},
+        "order": [],
+        "max_size": max_size,
+        "hits": 0,
+        "misses": 0
+    }
+    Ausgeben "LFU缓存创建，最大容量: " + max_size
+    gebe_zurueck cache
+Ende Funktion
+Funktion lfu_cache_get(cache, key)
+    // LFU缓存获取
+    // 参数: cache - LFU缓存, key - 键
+    // 返回值: 值 或 null
+    Wenn cache.data[key] != null then
+        cache.freq[key] = cache.freq[key] + 1
+        cache.hits = cache.hits + 1
+        Ausgeben "LFU缓存命中: " + key + " (频率: " + cache.freq[key] + ")"
+        gebe_zurueck cache.data[key]
+    Ende Wenn
+    cache.misses = cache.misses + 1
+    Ausgeben "LFU缓存未命中: " + key
+    gebe_zurueck null
+Ende Funktion
+Funktion lfu_cache_set(cache, key, value)
+    // LFU缓存设置
+    // 参数: cache - LFU缓存, key - 键, value - 值
+    Wenn cache.data[key] != null then
+        cache.data[key] = value
+        cache.freq[key] = cache.freq[key] + 1
+    Sonst
+        // 检查容量
+        Wenn liste_laenge(cache.order) >= cache.max_size then
+            // 找最小频率的键
+            min_freq = 999999
+            min_key = null
+            i = 0
+            Solange i < liste_laenge(cache.order)
+                k = liste_abrufen(cache.order, i)
+                Wenn cache.freq[k] < min_freq then
+                    min_freq = cache.freq[k]
+                    min_key = k
+                Ende Wenn
+                i = i + 1
+            Ende Solange
+            // 淘汰
+            Wenn min_key != null then
+                cache.data[min_key] = null
+                cache.freq[min_key] = null
+                liste_entfernen(cache.order, min_key)
+                Ausgeben "LFU缓存淘汰: " + min_key + " (频率: " + min_freq + ")"
+            Ende Wenn
+        Ende Wenn
+        cache.data[key] = value
+        cache.freq[key] = 1
+        liste_einfuegen(cache.order, key)
+    Ende Wenn
+    Ausgeben "LFU缓存设置: " + key + " = " + value
+Ende Funktion
+```
+
+08.09 17:26
+starc语言示例库〈13〉〈续〉〈4〉
+---
+示例652：基于时间轮的定时器
+```starc
+Funktion time_wheel_create(slot_count, tick_duration)
+    // 时间轮定时器 (用于海量定时任务)
+    // 参数: slot_count - 槽位数量, tick_duration - 每次tick的毫秒数
+    // 返回值: 时间轮对象
+    wheel = {
+        "slots": [],
+        "slot_count": slot_count,
+        "tick_duration": tick_duration,
+        "current_slot": 0,
+        "tasks": {},
+        "task_id_counter": 0
+    }
+    i = 0
+    Solange i < slot_count
+        liste_einfuegen(wheel.slots, [])
+        i = i + 1
+    Ende Solange
+    // 启动tick线程
+    spawn_thread(time_wheel_tick, wheel)
+    Ausgeben "时间轮创建完成，槽位数: " + slot_count + ", 精度: " + tick_duration + "ms"
+    gebe_zurueck wheel
+Ende Funktion
+Funktion time_wheel_add_task(wheel, delay, callback)
+    // 添加定时任务
+    // 参数: wheel - 时间轮, delay - 延迟毫秒数, callback - 回调函数
+    // 返回值: 任务ID
+    wheel.task_id_counter = wheel.task_id_counter + 1
+    task_id = wheel.task_id_counter
+    // 计算需要经过的tick次数
+    ticks = delay / wheel.tick_duration
+    // 计算目标槽位
+    target_slot = (wheel.current_slot + ticks) % wheel.slot_count
+    task = {
+        "id": task_id,
+        "callback": callback,
+        "remaining_ticks": ticks,
+        "target_slot": target_slot,
+        "created_at": jetzt()
+    }
+    liste_einfuegen(wheel.slots[target_slot], task)
+    wheel.tasks[task_id] = task
+    Ausgeben "时间轮任务添加: ID=" + task_id + ", 延迟=" + delay + "ms"
+    gebe_zurueck task_id
+Ende Funktion
+Funktion time_wheel_tick(wheel)
+    // 时间轮tick主循环
+    Solange wahr
+        system_schlafen(wheel.tick_duration)
+        // 当前槽位向前推进
+        wheel.current_slot = (wheel.current_slot + 1) % wheel.slot_count
+        // 获取当前槽位的所有任务
+        slot_tasks = wheel.slots[wheel.current_slot]
+        // 执行任务
+        i = 0
+        Solange i < liste_laenge(slot_tasks)
+            task = liste_abrufen(slot_tasks, i)
+            // 检查是否到了执行时间
+            Wenn task.remaining_ticks <= 1 then
+                // 执行回调
+                spawn_thread(task.callback, task.id)
+                wheel.tasks[task.id] = null
+                Ausgeben "时间轮任务执行: ID=" + task.id
+            Sonst
+                // 尚未到时间，减1并重新放回
+                task.remaining_ticks = task.remaining_ticks - 1
+                // 重新计算槽位
+                new_slot = (wheel.current_slot + task.remaining_ticks) % wheel.slot_count
+                liste_einfuegen(wheel.slots[new_slot], task)
+            Ende Wenn
+            i = i + 1
+        Ende Solange
+        // 清空当前槽
+        wheel.slots[wheel.current_slot] = []
+    Ende Solange
+Ende Funktion
+```
+示例653：异步任务池
+```starc
+Funktion async_task_pool_create(worker_count)
+    // 异步任务池 (批量并发控制)
+    // 参数: worker_count - 工作协程数量
+    // 返回值: 任务池对象
+    pool = {
+        "workers": worker_count,
+        "task_queue": [],
+        "results": {},
+        "running": 0,
+        "max_retry": 3
+    }
+    // 启动工作协程
+    i = 0
+    Solange i < worker_count
+        spawn_thread(async_worker_loop, pool, i)
+        i = i + 1
+    Ende Solange
+    Ausgeben "异步任务池创建，工作协程数: " + worker_count
+    gebe_zurueck pool
+Ende Funktion
+Funktion async_submit_task(pool, task_fn, priority)
+    // 提交任务到池
+    // 参数: pool - 任务池, task_fn - 任务函数, priority - 优先级(0-10)
+    // 返回值: 任务ID
+    task_id = uuid_generate()
+    task = {
+        "id": task_id,
+        "fn": task_fn,
+        "priority": priority,
+        "status": "pending",
+        "submit_time": jetzt()
+    }
+    // 按优先级插入队列
+    inserted = falsch
+    i = 0
+    Solange i < liste_laenge(pool.task_queue) and not inserted
+        existing = liste_abrufen(pool.task_queue, i)
+        Wenn priority > existing.priority then
+            liste_einfuegen(pool.task_queue, i, task)
+            inserted = wahr
+        Ende Wenn
+        i = i + 1
+    Ende Solange
+    Wenn not inserted then
+        liste_einfuegen(pool.task_queue, task)
+    Ende Wenn
+    Ausgeben "任务提交: " + task_id + " (优先级: " + priority + ")"
+    gebe_zurueck task_id
+Ende Funktion
+Funktion async_worker_loop(pool, worker_id)
+    // 工作协程循环
+    // 参数: pool - 任务池, worker_id - 工作协程ID
+    Solange wahr
+        // 从队列取任务
+        Wenn liste_laenge(pool.task_queue) > 0 then
+            task = liste_abrufen(pool.task_queue, 0)
+            liste_entfernen(pool.task_queue, 0)
+            pool.running = pool.running + 1
+            task.status = "running"
+            Ausgeben "工作协程 " + worker_id + " 开始执行任务: " + task.id
+            // 执行任务 (带重试)
+            retry = 0
+            Solange retry < pool.max_retry
+                try
+                    result = task.fn()
+                    task.status = "completed"
+                    task.result = result
+                    pool.results[task.id] = result
+                    retry = pool.max_retry
+                    Ausgeben "任务完成: " + task.id
+                catch (error)
+                    retry = retry + 1
+                    Wenn retry < pool.max_retry then
+                        Ausgeben "任务失败，重试 " + retry + "/" + pool.max_retry + ": " + task.id
+                    Sonst
+                        task.status = "failed"
+                        task.error = error
+                        Ausgeben "任务失败: " + task.id + " - " + error
+                    Ende Wenn
+                Ende Versuch
+            Ende Solange
+            pool.running = pool.running - 1
+        Sonst
+            system_schlafen(100)
+        Ende Wenn
+    Ende Solange
+Ende Funktion
+```
+示例654：读写锁（偏向读）
+```starc
+Funktion rw_lock_create()
+    // 读写锁 (读者优先)
+    // 返回值: 读写锁对象
+    lock = {
+        "readers": 0,
+        "writers": 0,
+        "write_pending": falsch,
+        "reader_count": 0,
+        "write_count": 0
+    }
+    Ausgeben "读写锁创建完成"
+    gebe_zurueck lock
+Ende Funktion
+Funktion rw_lock_acquire_read(lock)
+    // 获取读锁
+    // 参数: lock - 读写锁
+    Solange wahr
+        Wenn lock.writers == 0 and not lock.write_pending then
+            lock.readers = lock.readers + 1
+            lock.reader_count = lock.reader_count + 1
+            Ausgeben "读锁获取 (读者数: " + lock.readers + ")"
+            gebe_zurueck wahr
+        Ende Wenn
+        system_schlafen(1)
+    Ende Solange
+Ende Funktion
+Funktion rw_lock_acquire_write(lock)
+    // 获取写锁
+    // 参数: lock - 读写锁
+    Solange wahr
+        Wenn lock.readers == 0 and lock.writers == 0 then
+            lock.writers = 1
+            lock.write_pending = wahr
+            lock.write_count = lock.write_count + 1
+            Ausgeben "写锁获取"
+            gebe_zurueck wahr
+        Sonst
+            lock.write_pending = wahr
+            system_schlafen(1)
+        Ende Wenn
+    Ende Solange
+Ende Funktion
+Funktion rw_lock_release_read(lock)
+    // 释放读锁
+    // 参数: lock - 读写锁
+    lock.readers = lock.readers - 1
+    Wenn lock.readers == 0 then
+        lock.write_pending = falsch
+    Ende Wenn
+    Ausgeben "读锁释放 (剩余读者: " + lock.readers + ")"
+Ende Funktion
+Funktion rw_lock_release_write(lock)
+    // 释放写锁
+    // 参数: lock - 读写锁
+    lock.writers = 0
+    lock.write_pending = falsch
+    Ausgeben "写锁释放"
+Ende Funktion
+```
+示例655：环形缓冲区
+```starc
+Funktion ring_buffer_create(capacity)
+    // 环形缓冲区 (无锁队列)
+    // 参数: capacity - 缓冲区容量
+    // 返回值: 环形缓冲区对象
+    buffer = {
+        "data": [],
+        "capacity": capacity,
+        "head": 0,  // 读位置
+        "tail": 0,  // 写位置
+        "size": 0
+    }
+    i = 0
+    Solange i < capacity
+        liste_einfuegen(buffer.data, null)
+        i = i + 1
+    Ende Solange
+    Ausgeben "环形缓冲区创建，容量: " + capacity
+    gebe_zurueck buffer
+Ende Funktion
+Funktion ring_buffer_push(buffer, item)
+    // 写入环形缓冲区
+    // 参数: buffer - 环形缓冲区, item - 数据项
+    // 返回值: 是否写入成功
+    Wenn buffer.size >= buffer.capacity then
+        Ausgeben "环形缓冲区已满"
+        gebe_zurueck falsch
+    Ende Wenn
+    buffer.data[buffer.tail] = item
+    buffer.tail = (buffer.tail + 1) % buffer.capacity
+    buffer.size = buffer.size + 1
+    Ausgeben "环形缓冲区写入，当前大小: " + buffer.size
+    gebe_zurueck wahr
+Ende Funktion
+Funktion ring_buffer_pop(buffer)
+    // 读取环形缓冲区
+    // 参数: buffer - 环形缓冲区
+    // 返回值: 数据项 或 null
+    Wenn buffer.size == 0 then
+        Ausgeben "环形缓冲区为空"
+        gebe_zurueck null
+    Ende Wenn
+    item = buffer.data[buffer.head]
+    buffer.data[buffer.head] = null
+    buffer.head = (buffer.head + 1) % buffer.capacity
+    buffer.size = buffer.size - 1
+    Ausgeben "环形缓冲区读取，剩余: " + buffer.size
+    gebe_zurueck item
+Ende Funktion
+```
+示例656：内存池分配器
+```starc
+Funktion memory_pool_create(block_size, pool_size)
+    // 内存池分配器 (预分配固定大小块)
+    // 参数: block_size - 每个块的大小(字节), pool_size - 总块数
+    // 返回值: 内存池对象
+    pool = {
+        "block_size": block_size,
+        "total_blocks": pool_size,
+        "free_blocks": [],
+        "allocated": 0
+    }
+    // 预分配所有块
+    i = 0
+    Solange i < pool_size
+        liste_einfuegen(pool.free_blocks, zufall_byte(block_size)) // 模拟分配内存
+        i = i + 1
+    Ende Solange
+    Ausgeben "内存池创建，块大小: " + block_size + "字节，总块数: " + pool_size
+    gebe_zurueck pool
+Ende Funktion
+Funktion memory_pool_alloc(pool)
+    // 从内存池分配块
+    // 参数: pool - 内存池
+    // 返回值: 分配的内存块 或 null
+    Wenn liste_laenge(pool.free_blocks) == 0 then
+        Ausgeben "内存池已耗尽"
+        gebe_zurueck null
+    Ende Wenn
+    block = liste_abrufen(pool.free_blocks, 0)
+    liste_entfernen(pool.free_blocks, 0)
+    pool.allocated = pool.allocated + 1
+    Ausgeben "内存池分配，已分配: " + pool.allocated + "/" + pool.total_blocks
+    gebe_zurueck block
+Ende Funktion
+Funktion memory_pool_free(pool, block)
+    // 释放内存块回池
+    // 参数: pool - 内存池, block - 要释放的块
+    liste_einfuegen(pool.free_blocks, block)
+    pool.allocated = pool.allocated - 1
+    Ausgeben "内存池释放，剩余空闲: " + liste_laenge(pool.free_blocks)
+Ende Funktion
+```
+示例657：双缓冲切换
+```starc
+Funktion double_buffer_create(initial_data)
+    // 双缓冲 (读写分离)
+    // 参数: initial_data - 初始数据
+    // 返回值: 双缓冲对象
+    db = {
+        "front": initial_data,   // 读缓冲区
+        "back": initial_data,    // 写缓冲区
+        "pending_update": falsch,
+        "version": 0
+    }
+    Ausgeben "双缓冲创建完成"
+    gebe_zurueck db
+Ende Funktion
+Funktion double_buffer_write(db, new_data)
+    // 写入数据 (在后台缓冲区)
+    // 参数: db - 双缓冲对象, new_data - 新数据
+    db.back = new_data
+    db.pending_update = wahr
+    Ausgeben "双缓冲写入完成，版本: " + db.version
+Ende Funktion
+Funktion double_buffer_swap(db)
+    // 交换前后缓冲区 (原子操作)
+    // 参数: db - 双缓冲对象
+    // 返回值: 交换前的前缓冲区数据
+    old_front = db.front
+    db.front = db.back
+    db.back = old_front
+    db.pending_update = falsch
+    db.version = db.version + 1
+    Ausgeben "双缓冲交换完成，新版本: " + db.version
+    gebe_zurueck old_front
+Ende Funktion
+Funktion double_buffer_read(db)
+    // 读取前缓冲区 (无锁)
+    // 参数: db - 双缓冲对象
+    // 返回值: 当前数据
+    Ausgeben "双缓冲读取，版本: " + db.version
+    gebe_zurueck db.front
+Ende Funktion
+```
+示例658：对象池
+```starc
+Funktion object_pool_create(factory, max_size)
+    // 对象池 (复用大对象)
+    // 参数: factory - 对象创建函数, max_size - 池最大容量
+    // 返回值: 对象池对象
+    pool = {
+        "factory": factory,
+        "pool": [],
+        "max_size": max_size,
+        "created": 0,
+        "reused": 0
+    }
+    // 预热池 (预创建一些对象)
+    i = 0
+    Solange i < 5 and i < max_size
+        obj = factory()
+        liste_einfuegen(pool.pool, obj)
+        pool.created = pool.created + 1
+        i = i + 1
+    Ende Solange
+    Ausgeben "对象池创建，初始: " + i + " 个对象"
+    gebe_zurueck pool
+Ende Funktion
+Funktion object_pool_get(pool)
+    // 从池中获取对象
+    // 参数: pool - 对象池
+    // 返回值: 对象
+    Wenn liste_laenge(pool.pool) > 0 then
+        obj = liste_abrufen(pool.pool, 0)
+        liste_entfernen(pool.pool, 0)
+        pool.reused = pool.reused + 1
+        Ausgeben "对象池复用 (复用率: " + (pool.reused * 100 / (pool.created + pool.reused)) + "%)"
+        gebe_zurueck obj
+    Ende Wenn
+    // 池空，创建新对象
+    obj = pool.factory()
+    pool.created = pool.created + 1
+    Ausgeben "对象池新建 (总创建: " + pool.created + ")"
+    gebe_zurueck obj
+Ende Funktion
+Funktion object_pool_put(pool, obj)
+    // 归还对象到池
+    // 参数: pool - 对象池, obj - 对象
+    Wenn liste_laenge(pool.pool) < pool.max_size then
+        // 重置对象状态 (清空数据)
+        obj.reset()
+        liste_einfuegen(pool.pool, obj)
+        Ausgeben "对象池归还，池大小: " + liste_laenge(pool.pool)
+    Sonst
+        // 池满，丢弃对象
+        Ausgeben "对象池已满，丢弃对象"
+    Ende Wenn
+Ende Funktion
+```
+示例659：协程调度器
+```starc
+Funktion coroutine_scheduler_create()
+    // 协程调度器 (协作式)
+    // 返回值: 调度器对象
+    scheduler = {
+        "coroutines": [],
+        "running": null,
+        "current": 0
+    }
+    Ausgeben "协程调度器创建完成"
+    gebe_zurueck scheduler
+Ende Funktion
+Funktion coroutine_scheduler_add(scheduler, coro)
+    // 注册协程到调度器
+    // 参数: scheduler - 调度器, coro - 协程对象
+    liste_einfuegen(scheduler.coroutines, coro)
+    Ausgeben "协程注册完成"
+Ende Funktion
+Funktion coroutine_scheduler_run(scheduler)
+    // 运行调度器 (轮转)
+    // 参数: scheduler - 调度器
+    Solange liste_laenge(scheduler.coroutines) > 0
+        i = 0
+        Solange i < liste_laenge(scheduler.coroutines)
+            coro = liste_abrufen(scheduler.coroutines, i)
+            // 恢复协程执行
+            result = coroutine_resume(coro, null)
+            // 如果协程完成，移除
+            Wenn coro.state == "dead" then
+                liste_entfernen(scheduler.coroutines, i)
+                i = i - 1
+                Ausgeben "协程完成并移除"
+            Ende Wenn
+            i = i + 1
+        Ende Solange
+        // 给其他任务让出CPU (协程特点)
+        system_schlafen(1)
+    Ende Solange
+    Ausgeben "所有协程执行完毕"
+Ende Funktion
+```
+示例660：零拷贝数据管道
+```starc
+Funktion zero_copy_pipe_create(buffer_size)
+    // 零拷贝数据管道 (内存直接传递)
+    // 参数: buffer_size - 缓冲区大小
+    // 返回值: 管道对象
+    pipe = {
+        "buffer": zufall_byte(buffer_size),
+        "size": buffer_size,
+        "read_pos": 0,
+        "write_pos": 0,
+        "data_len": 0,
+        "ref_count": 0
+    }
+    Ausgeben "零拷贝管道创建，缓冲区: " + buffer_size + "字节"
+    gebe_zurueck pipe
+Ende Funktion
+Funktion zero_copy_pipe_write(pipe, data_ptr, length)
+    // 直接写入指针 (零拷贝)
+    // 参数: pipe - 管道, data_ptr - 数据指针, length - 数据长度
+    // 返回值: 写入字节数
+    available = pipe.size - pipe.data_len
+    Wenn length > available then
+        length = available
+    Ende Wenn
+    // 模拟: 将数据直接复制到缓冲区 (零拷贝含义)
+    // 实际实现中会直接操作内存地址
+    pipe.data_len = pipe.data_len + length
+    pipe.write_pos = (pipe.write_pos + length) % pipe.size
+    Ausgeben "零拷贝写入 " + length + " 字节"
+    gebe_zurueck length
+Ende Funktion
+Funktion zero_copy_pipe_read(pipe, length)
+    // 直接读取指针 (返回数据引用)
+    // 参数: pipe - 管道, length - 读取长度
+    // 返回值: 数据指针 (模拟)
+    Wenn length > pipe.data_len then
+        length = pipe.data_len
+    Ende Wenn
+    // 模拟: 返回数据引用
+    data_ref = pipe.buffer[pipe.read_pos:pipe.read_pos+length]
+    pipe.data_len = pipe.data_len - length
+    pipe.read_pos = (pipe.read_pos + length) % pipe.size
+    Ausgeben "零拷贝读取 " + length + " 字节"
+    gebe_zurueck data_ref
+Ende Funktion
+Funktion zero_copy_pipe_clear(pipe)
+    // 清空管道 (不释放内存)
+    // 参数: pipe - 管道
+    pipe.read_pos = 0
+    pipe.write_pos = 0
+    pipe.data_len = 0
+    Ausgeben "零拷贝管道已清空"
+Ende Funktion
+```
+---
+
